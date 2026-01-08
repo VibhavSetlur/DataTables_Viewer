@@ -214,6 +214,23 @@ export interface VirtualColumnSchema extends Omit<ColumnSchema, 'column'> {
     };
 }
 
+/**
+ * API Configuration
+ */
+export interface ApiConfig {
+    /** Unique ID for this API */
+    id: string;
+    /** Human readable name */
+    name: string;
+    /** Base URL */
+    url: string;
+    /** Type of API service */
+    type?: 'rest' | 'json_server' | 'mock';
+    /** Custom headers */
+    headers?: Record<string, string>;
+}
+
+
 // =============================================================================
 // CATEGORY SCHEMA
 // =============================================================================
@@ -471,9 +488,15 @@ export interface AppConfig {
         name: string;
         version?: string;
         description?: string;
+        /** @deprecated Use apis.default instead */
         apiUrl?: string;
         environment?: 'local' | 'appdev' | 'prod';
     };
+
+    /**
+     * API configurations
+     */
+    apis?: Record<string, ApiConfig>;
 
     /** Data type manifest */
     dataTypes: Record<string, DataTypeReference>;

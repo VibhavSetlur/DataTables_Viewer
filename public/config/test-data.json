@@ -1,0 +1,180 @@
+{
+    "id": "test_data",
+    "name": "Local Test Data",
+    "version": "1.0.0",
+    "description": "Local SQLite database containing E. coli test data",
+    "icon": "bi-database",
+    "color": "#6f42c1",
+    "defaults": {
+        "pageSize": 25,
+        "density": "compact",
+        "showRowNumbers": true,
+        "enableSelection": true
+    },
+    "tables": {
+        "genome_features": {
+            "displayName": "Genome Features",
+            "description": "Genomic features from the test database",
+            "icon": "bi-dna",
+            "columns": [
+                {
+                    "column": "id",
+                    "displayName": "ID",
+                    "dataType": "integer",
+                    "visible": false
+                },
+                {
+                    "column": "feature_id",
+                    "displayName": "Feature ID",
+                    "dataType": "id",
+                    "copyable": true,
+                    "width": "150px",
+                    "pin": "left"
+                },
+                {
+                    "column": "genome_id",
+                    "displayName": "Genome ID",
+                    "dataType": "string",
+                    "width": "120px"
+                },
+                {
+                    "column": "contig_id",
+                    "displayName": "Contig",
+                    "dataType": "string",
+                    "width": "120px"
+                },
+                {
+                    "column": "bakta_function",
+                    "displayName": "Function (Bakta)",
+                    "dataType": "string",
+                    "width": "300px",
+                    "searchable": true
+                },
+                {
+                    "column": "rast_function",
+                    "displayName": "Function (RAST)",
+                    "dataType": "string",
+                    "width": "300px",
+                    "visible": false
+                },
+                {
+                    "column": "gene_names",
+                    "displayName": "Gene",
+                    "dataType": "string",
+                    "width": "100px",
+                    "transform": {
+                        "type": "badge",
+                        "options": {
+                            "color": "info"
+                        }
+                    }
+                },
+                {
+                    "column": "length",
+                    "displayName": "Length (bp)",
+                    "dataType": "integer",
+                    "width": "100px"
+                },
+                {
+                    "column": "start",
+                    "displayName": "Start",
+                    "dataType": "integer",
+                    "visible": false
+                },
+                {
+                    "column": "end",
+                    "displayName": "End",
+                    "dataType": "integer",
+                    "visible": false
+                },
+                {
+                    "column": "strand",
+                    "displayName": "Strand",
+                    "dataType": "string",
+                    "width": "60px",
+                    "align": "center"
+                },
+                {
+                    "column": "sequence",
+                    "displayName": "Sequence",
+                    "dataType": "sequence",
+                    "visible": false
+                }
+            ],
+            "settings": {
+                "defaultSortColumn": "feature_id",
+                "defaultSortOrder": "asc"
+            }
+        },
+        "pan_genome_features": {
+            "displayName": "Pangenome Features",
+            "description": "Pangenome features clustering info",
+            "icon": "bi-diagram-3",
+            "columns": [
+                {
+                    "column": "feature_id",
+                    "displayName": "Feature ID",
+                    "dataType": "id",
+                    "copyable": true,
+                    "width": "150px"
+                },
+                {
+                    "column": "cluster_id",
+                    "displayName": "Cluster ID",
+                    "dataType": "string",
+                    "width": "120px",
+                    "copyable": true
+                },
+                {
+                    "column": "is_core",
+                    "displayName": "Is Core",
+                    "dataType": "boolean",
+                    "width": "80px"
+                },
+                {
+                    "column": "feature_id",
+                    "displayName": "Feature ID",
+                    "dataType": "id",
+                    "pin": "left"
+                },
+                {
+                    "column": "bakta_function",
+                    "displayName": "Function",
+                    "dataType": "string"
+                }
+            ]
+        },
+        "genome_ani": {
+            "displayName": "ANI Matrix",
+            "description": "Average Nucleotide Identity",
+            "icon": "bi-grid-3x3",
+            "columns": [
+                {
+                    "column": "genome1",
+                    "displayName": "Genome 1",
+                    "dataType": "string"
+                },
+                {
+                    "column": "genome2",
+                    "displayName": "Genome 2",
+                    "dataType": "string"
+                },
+                {
+                    "column": "ani",
+                    "displayName": "ANI",
+                    "dataType": "percentage"
+                },
+                {
+                    "column": "af1",
+                    "displayName": "AF1",
+                    "dataType": "float"
+                },
+                {
+                    "column": "af2",
+                    "displayName": "AF2",
+                    "dataType": "float"
+                }
+            ]
+        }
+    }
+}

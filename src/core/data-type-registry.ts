@@ -10,6 +10,7 @@
 
 import type {
     AppConfig,
+    ApiConfig,
     DataTypeConfig,
     DataTypeReference,
     TableSchema,
@@ -96,6 +97,8 @@ export class DataTypeRegistry {
     private appConfig: AppConfig | null = null;
     private dataTypes: Map<string, DataTypeConfig> = new Map();
     private loadedUrls: Set<string> = new Set();
+    private apiConfigs: Map<string, ApiConfig> = new Map();
+    private defaultApiId: string | null = null;
     private matchMap: Map<string, string> = new Map(); // Maps object type strings to data type IDs
     private globalSettings: Required<GlobalSettings> = { ...DEFAULT_GLOBAL_SETTINGS };
 
@@ -138,6 +141,20 @@ export class DataTypeRegistry {
                     ...config.defaults.numberFormat
                 }
             };
+        }
+
+        // Initialize APIs
+        if (config.apis) {
+            Object.values(config.apis).forEach(api => {
+                this.apiConfigs.set(api.id, api);
+            });
+            // Set default API if available
+            if (config.apis.default) {
+                this.defaultApiId = 'default';
+            } else {
+                const firstId = Object.keys(config.apis)[0];
+                if (firstId) this.defaultApiId = firstId;
+            }
         }
 
         // Initialize match map and load data types
@@ -368,10 +385,33 @@ export class DataTypeRegistry {
     }
 
     /**
-     * Get API URL from app config
+     * Get API URL from app config (Deprecated: Use getApi() instead)
      */
     public getApiUrl(): string | null {
-        return this.appConfig?.app.apiUrl || null;
+        return this.appConfig?.app.apiUrl ||
+            (this.defaultApiId ? this.apiConfigs.get(this.defaultApiId)?.url || null : null);
+    }
+
+    /**
+     * Get API configuration by ID
+     */
+    public getApi(id?: string): ApiConfig | undefined {
+        if (!id) return this.defaultApiId ? this.apiConfigs.get(this.defaultApiId) : undefined;
+        return this.apiConfigs.get(id);
+    }
+
+    /**
+     * Get all API configurations
+     */
+    public getApis(): ApiConfig[] {
+        return Array.from(this.apiConfigs.values());
+    }
+
+    /**
+     * Get default API ID
+     */
+    public getDefaultApiId(): string | null {
+        return this.defaultApiId;
     }
 
     /**

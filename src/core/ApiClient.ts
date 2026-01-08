@@ -4,10 +4,14 @@
  * TypeScript implementation of the KBase Client.
  */
 
+import type { ApiConfig } from '../types/schema';
+
 interface ClientOptions {
+    apiConfig?: ApiConfig;
     baseUrl?: string;
     token?: string;
     environment?: 'appdev' | 'prod' | 'local';
+    headers?: Record<string, string>;
 }
 
 interface CacheEntry<T> {
@@ -39,12 +43,23 @@ export class ApiClient {
     private baseUrl: string;
     private token: string | null;
     private environment: string;
+    private customHeaders: Record<string, string>;
     private cache: Map<string, CacheEntry<any>>;
     private cacheTTL: number;
 
     constructor(options: ClientOptions = {}) {
         this.environment = options.environment || 'appdev';
-        this.baseUrl = options.baseUrl || this.getDefaultUrl(this.environment);
+
+        if (options.apiConfig) {
+            this.baseUrl = options.apiConfig.url;
+            this.customHeaders = options.apiConfig.headers || {};
+            // If environment is in options, it overrides; otherwise check apiConfig? 
+            // ApiConfig definitions don't currently have environment, keep defaulting to 'appdev' or options
+        } else {
+            this.baseUrl = options.baseUrl || this.getDefaultUrl(this.environment);
+            this.customHeaders = options.headers || {};
+        }
+
         this.token = options.token || null;
         this.cache = new Map();
         this.cacheTTL = 300000; // 5 minutes
@@ -62,7 +77,8 @@ export class ApiClient {
     private getHeaders(): HeadersInit {
         const headers: HeadersInit = {
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            ...this.customHeaders
         };
         if (this.token) {
             (headers as any)['Authorization'] = this.token;
@@ -98,8 +114,16 @@ export class ApiClient {
         this.clearCache();
     }
 
+    public updateConfig(config: ApiConfig): void {
+        this.baseUrl = config.url;
+        this.customHeaders = config.headers || {};
+        this.clearCache();
+    }
+
     public setEnvironment(environment: 'appdev' | 'prod' | 'local'): void {
         this.environment = environment;
+        // Only reset baseUrl to default if NOT using explicit config?
+        // For backward compatibility, if this method is called, we assume we want to switch to default url for that env
         this.baseUrl = this.getDefaultUrl(environment);
         this.clearCache();
     }
@@ -175,3 +199,4 @@ export class ApiClient {
         return this.request('/table-data', 'POST', body, false);
     }
 }
+

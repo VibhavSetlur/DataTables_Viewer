@@ -304,6 +304,27 @@ export class ConfigManager {
     }
 
     /**
+     * Get API configuration
+     */
+    public getApi(id?: string): { id: string, name: string, url: string, type?: string } | undefined {
+        return this.registry.getApi(id);
+    }
+
+    /**
+     * Get all API configurations
+     */
+    public getApis(): { id: string, name: string, url: string, type?: string }[] {
+        return this.registry.getApis();
+    }
+
+    /**
+     * Get default API ID
+     */
+    public getDefaultApiId(): string | null {
+        return this.registry.getDefaultApiId();
+    }
+
+    /**
      * Get API URL
      */
     public getApiUrl(): string | null {

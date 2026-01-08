@@ -1,10 +1,23 @@
 {
     "app": {
         "name": "DataTables Viewer",
-        "version": "3.1.0",
+        "version": "4.0.0",
         "description": "Professional researcher-grade data exploration tool",
-        "apiUrl": "http://localhost:8000", 
         "environment": "local"
+    },
+    "apis": {
+        "default": {
+            "id": "default",
+            "name": "KBase AppDev",
+            "url": "http://localhost:8000",
+            "type": "rest"
+        },
+        "test_data": {
+            "id": "test_data",
+            "name": "Local Test Data",
+            "url": "http://localhost:8000",
+            "type": "json_server"
+        }
     },
     "dataTypes": {
         "genome_data_tables": {
@@ -23,6 +36,14 @@
                 "KBaseGenomes.Pangenome"
             ],
             "autoLoad": true
+        },
+        "test_data": {
+            "configUrl": "/config/test-data.json",
+            "matches": [
+                "test_data"
+            ],
+            "autoLoad": true,
+            "priority": 10
         }
     },
     "defaults": {

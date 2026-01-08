@@ -39,6 +39,7 @@ export class TableRenderer {
     private selectedRows: Set<number> = new Set();
     private theme: 'light' | 'dark' = 'light';
     private density: 'compact' | 'default' | 'presentation' = 'default';
+    private currentApiId: string | null = null;
 
 
     constructor(options: RendererOptions) {
@@ -61,9 +62,22 @@ export class TableRenderer {
         try {
             await this.loadConfiguration();
             const env = this.configManager.getEnvironment();
-            const apiUrl = this.configManager.getApiUrl();
-            this.client = apiUrl ? new ApiClient({ environment: env, baseUrl: apiUrl }) : this.client;
-            if (!apiUrl) this.client.setEnvironment(env);
+            const apis = this.configManager.getApis();
+            const defaultApiId = this.configManager.getDefaultApiId();
+
+            // Determine initial API
+            this.currentApiId = defaultApiId || (apis.length > 0 ? apis[0].id : null);
+
+            if (this.currentApiId) {
+                const apiConfig = this.configManager.getApi(this.currentApiId);
+                // Cast to any to avoid strict type checks if ApiConfig types slightly mismatch during this transition
+                if (apiConfig) this.client.updateConfig(apiConfig as any);
+            } else {
+                // Fallback to legacy
+                const apiUrl = this.configManager.getApiUrl();
+                if (apiUrl) this.client = new ApiClient({ environment: env, baseUrl: apiUrl });
+                else this.client.setEnvironment(env);
+            }
 
             const settings = this.configManager.getGlobalSettings();
             this.stateManager.update({
@@ -73,6 +87,7 @@ export class TableRenderer {
 
             this.loadStateFromUrl();
             this.renderUI();
+            this.initApiSelector();
             this.bindEvents();
         } catch (e: any) {
             this.container.innerHTML = `<div class="ts-alert ts-alert-danger"><i class="bi bi-x-circle-fill"></i> ${e.message}</div>`;
@@ -347,6 +362,8 @@ export class TableRenderer {
     private cacheDom() {
         this.dom = {
             app: this.container.querySelector('.ts-app'),
+            apiField: this.container.querySelector('#ts-api-field'),
+            apiSelect: this.container.querySelector('#ts-api-select'),
             token: this.container.querySelector('#ts-token'),
             berdl: this.container.querySelector('#ts-berdl'),
             loadBtn: this.container.querySelector('#ts-load'),
@@ -486,6 +503,12 @@ export class TableRenderer {
         this.dom.settingsTrigger?.addEventListener('click', (e: Event) => {
             e.stopPropagation();
             this.dom.settingsPopup?.classList.toggle('show');
+        });
+
+
+        this.dom.apiSelect?.addEventListener('change', (e: Event) => {
+            const apiId = (e.target as HTMLSelectElement).value;
+            this.switchApi(apiId);
         });
 
         document.addEventListener('click', (e: Event) => {
@@ -797,6 +820,7 @@ export class TableRenderer {
             this.stateManager.update({ availableTables: tables });
 
             if (tables.length === 0) { this.showAlert('No tables found', 'warning'); return; }
+
 
             this.populateTableSelect(tables);
             this.dom.navSection.style.display = 'block';
@@ -1126,5 +1150,31 @@ export class TableRenderer {
 
     private hideTooltip() {
         if (this.dom.tooltip) this.dom.tooltip.classList.remove('show');
+    }
+
+    private initApiSelector() {
+        const apis = this.configManager.getApis();
+        if (apis.length > 1 && this.dom.apiField && this.dom.apiSelect) {
+            this.dom.apiField.style.display = 'block';
+            this.dom.apiSelect.innerHTML = apis.map(api =>
+                `<option value="${api.id}" ${api.id === this.currentApiId ? 'selected' : ''}>${api.name}</option>`
+            ).join('');
+        }
+    }
+
+    private switchApi(apiId: string) {
+        const apiConfig = this.configManager.getApi(apiId);
+        if (apiConfig) {
+            this.currentApiId = apiId;
+            this.client.updateConfig(apiConfig as any);
+            console.log(`Switched API to ${apiConfig.name} (${apiConfig.url})`);
+
+            // Optional: reset state or clear loaded data
+            this.stateManager.update({
+                error: null,
+                loading: false,
+                // Don't necessarily clear berdl/token as they might be valid across envs (e.g. dev/prod)
+            });
+        }
     }
 }
