@@ -516,6 +516,7 @@ export interface ResolvedColumnConfig extends Required<Pick<ColumnSchema,
     'column' | 'visible' | 'sortable' | 'filterable' | 'searchable' | 'copyable'
 >> {
     displayName: string;
+    description?: string;
     dataType: ColumnDataType;
     width: string;
     align: TextAlign;

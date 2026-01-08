@@ -29,6 +29,7 @@ export interface TransformerConfig {
 export interface TableColumnConfig {
     column: string;
     displayName?: string;
+    description?: string;
     width?: string;
     visible?: boolean;
     sortable?: boolean;
@@ -378,6 +379,7 @@ export class ConfigManager {
             columns: resolved.columns.map(col => ({
                 column: col.column,
                 displayName: col.displayName,
+                description: col.description,
                 width: col.width,
                 visible: col.visible,
                 sortable: col.sortable,

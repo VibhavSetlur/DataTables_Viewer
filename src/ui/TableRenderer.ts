@@ -1,14 +1,6 @@
 /**
  * TableRenderer - Research-Grade Scientific Data Viewer
- * 
- * Features:
- * - Extensible configuration via DataTypeRegistry
- * - Settings popup (bottom-left) with theme/density
- * - Proper row counts
- * - Dark/Light theme support
- * - All previous features
- * 
- * Version 4.0 - Extensible Configuration
+ * Orchestrator (Controller)
  */
 
 import { ApiClient } from '../core/ApiClient';
@@ -16,7 +8,10 @@ import { DataTypeRegistry } from '../core/data-type-registry';
 import { ConfigManager, type TableColumnConfig } from '../utils/config-manager';
 import { StateManager, type AppState } from '../core/StateManager';
 import { CategoryManager } from '../core/CategoryManager';
-import { Transformers } from '../utils/transformers';
+import { Sidebar } from './components/Sidebar';
+import { Toolbar } from './components/Toolbar';
+import { DataGrid } from './components/DataGrid';
+import { exportManager } from '../core/ExportManager';
 import '../style.css';
 
 export interface RendererOptions {
@@ -24,8 +19,6 @@ export interface RendererOptions {
     configUrl?: string;
     client?: ApiClient;
 }
-
-const DEBOUNCE_MS = 300; // Reduced from 500ms for better researcher responsiveness
 
 export class TableRenderer {
     private container: HTMLElement;
@@ -35,12 +28,15 @@ export class TableRenderer {
     private client!: ApiClient;
     private stateManager: StateManager;
     private categoryManager: CategoryManager | null = null;
-    private dom: Record<string, any> = {};
-    private selectedRows: Set<number> = new Set();
-    private theme: 'light' | 'dark' = 'light';
-    private density: 'compact' | 'default' | 'presentation' = 'default';
-    private currentApiId: string | null = null;
 
+    // Components
+    private sidebar!: Sidebar;
+    private toolbar!: Toolbar;
+    private grid!: DataGrid;
+
+    private theme: 'light' | 'dark' = 'light';
+    private density: 'compact' | 'normal' | 'comfortable' = 'normal';
+    private dom: Record<string, HTMLElement> = {};
 
     constructor(options: RendererOptions) {
         if (!options.container) throw new Error('Container required');
@@ -53,7 +49,7 @@ export class TableRenderer {
 
         // Load saved preferences
         const savedTheme = localStorage.getItem('ts-theme') as 'light' | 'dark';
-        const savedDensity = localStorage.getItem('ts-density') as 'compact' | 'default' | 'presentation';
+        const savedDensity = localStorage.getItem('ts-density') as 'compact' | 'normal' | 'comfortable';
         if (savedTheme) this.theme = savedTheme;
         if (savedDensity) this.density = savedDensity;
     }
@@ -65,15 +61,12 @@ export class TableRenderer {
             const apis = this.configManager.getApis();
             const defaultApiId = this.configManager.getDefaultApiId();
 
-            // Determine initial API
-            this.currentApiId = defaultApiId || (apis.length > 0 ? apis[0].id : null);
+            let currentApiId = defaultApiId || (apis.length > 0 ? apis[0].id : null);
 
-            if (this.currentApiId) {
-                const apiConfig = this.configManager.getApi(this.currentApiId);
-                // Cast to any to avoid strict type checks if ApiConfig types slightly mismatch during this transition
+            if (currentApiId) {
+                const apiConfig = this.configManager.getApi(currentApiId);
                 if (apiConfig) this.client.updateConfig(apiConfig as any);
             } else {
-                // Fallback to legacy
                 const apiUrl = this.configManager.getApiUrl();
                 if (apiUrl) this.client = new ApiClient({ environment: env, baseUrl: apiUrl });
                 else this.client.setEnvironment(env);
@@ -86,244 +79,36 @@ export class TableRenderer {
             });
 
             this.loadStateFromUrl();
-            this.renderUI();
-            this.initApiSelector();
-            this.bindEvents();
+            this.renderLayout();
+            this.initComponents();
+
+            // Initial API setup in Sidebar
+            // this.sidebar.initApiSelector(); // Removed
+
         } catch (e: any) {
             this.container.innerHTML = `<div class="ts-alert ts-alert-danger"><i class="bi bi-x-circle-fill"></i> ${e.message}</div>`;
         }
     }
 
-    private async loadConfiguration() {
-        // Try new config format first (config/index.json)
-        const newConfigUrl = this.configUrl?.replace(/\\.json$/, '') === '/config'
-            ? '/config/index.json'
-            : '/config/index.json';
-
-        try {
-            // Try new multi-file config format
-            const res = await fetch(newConfigUrl);
-            if (res.ok) {
-                const appConfig = await res.json();
-                // Check if it's new format (has dataTypes)
-                if (appConfig.dataTypes) {
-                    await this.registry.initialize(appConfig);
-                    this.configManager = new ConfigManager(appConfig);
-                    console.log('Loaded new config format from', newConfigUrl);
-                    return;
-                }
-            }
-        } catch {
-            // Fall through to legacy config
-        }
-
-        // Fallback to legacy config URL or inline config
-        let config: any = {};
-        if (this.configUrl) {
-            try {
-                const res = await fetch(this.configUrl);
-                if (res.ok) config = await res.json();
-            } catch { }
-        }
-        if (!Object.keys(config).length && (window as any).DEFAULT_CONFIG) {
-            config = (window as any).DEFAULT_CONFIG;
-        }
-        this.configManager = new ConfigManager(config);
-    }
-
-    private loadStateFromUrl() {
-        const params = new URLSearchParams(window.location.search);
-        const table = params.get('table');
-        const sort = params.get('sort');
-        const page = params.get('page');
-        const filters = params.get('filters');
-
-        if (table) (this as any)._initialTable = table;
-        if (sort) {
-            const [col, order] = sort.split(':');
-            this.stateManager.update({ sortColumn: col, sortOrder: order as 'asc' | 'desc' });
-        }
-        if (page) this.stateManager.update({ currentPage: parseInt(page) - 1 });
-        if (filters) {
-            try { this.stateManager.update({ columnFilters: JSON.parse(filters) }); } catch { }
-        }
-    }
-
-    private syncStateToUrl() {
-        const state = this.stateManager.getState();
-        const params = new URLSearchParams();
-        if (state.activeTableName) params.set('table', state.activeTableName);
-        if (state.sortColumn) params.set('sort', `${state.sortColumn}:${state.sortOrder}`);
-        if (state.currentPage > 0) params.set('page', String(state.currentPage + 1));
-        if (Object.keys(state.columnFilters).length) {
-            params.set('filters', JSON.stringify(state.columnFilters));
-        }
-        const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
-        window.history.replaceState({}, '', newUrl);
-    }
-
-    private onStateChange(state: AppState) {
-        if (this.dom.status) {
-            if (state.totalCount > 0) {
-                const start = state.currentPage * state.pageSize + 1;
-                const end = Math.min((state.currentPage + 1) * state.pageSize, state.totalCount);
-                this.dom.status.innerHTML = `Showing <strong>${start.toLocaleString()}</strong> – <strong>${end.toLocaleString()}</strong> of <strong>${state.totalCount.toLocaleString()}</strong> rows`;
-            } else {
-                this.dom.status.textContent = 'Ready';
-            }
-        }
-        this.updatePagination(state);
-        this.syncStateToUrl();
-
-        if (this.dom.loadBtn) {
-            this.dom.loadBtn.innerHTML = state.loading
-                ? '<span class="ts-spinner"></span> Loading...'
-                : '<i class="bi bi-database-fill"></i> Load Data';
-            this.dom.loadBtn.disabled = state.loading;
-        }
-
-        this.renderFilterChips();
-        if (state.error) this.showAlert(state.error, 'danger');
-    }
-
-    private renderUI() {
-        const appName = this.configManager.getAppName();
+    private renderLayout() {
+        // const appName = this.configManager.getAppName(); // Unused here as it's used in Sidebar
         this.container.innerHTML = `
             <div class="ts-app" data-theme="${this.theme}" data-density="${this.density}">
-                <!-- SIDEBAR -->
-                <aside class="ts-sidebar">
-                    <header class="ts-sidebar-header">
-                        <div class="ts-brand">
-                            <div class="ts-brand-icon"><i class="bi bi-grid-3x3-gap-fill"></i></div>
-                            <span class="ts-brand-name">${appName}</span>
-                        </div>
-                    </header>
-
-                    <div class="ts-sidebar-body">
-                        <!-- Connection -->
-                        <section class="ts-section">
-                            <div class="ts-section-header">
-                                <i class="bi bi-plug-fill ts-section-icon"></i>
-                                <span class="ts-section-title">Connection</span>
-                            </div>
-                            <div class="ts-field">
-                                <label class="ts-label"><i class="bi bi-key"></i> Auth Token <span class="required">*</span></label>
-                                <input type="password" class="ts-input" id="ts-token" placeholder="KBase token">
-                            </div>
-                            <div class="ts-field">
-                                <label class="ts-label"><i class="bi bi-hash"></i> Object ID / UPA</label>
-                                <input type="text" class="ts-input" id="ts-berdl" 
-                                    placeholder="e.g., 76990/7/2 or UUID"
-                                    aria-label="KBase Object UPA or ID" value="76990/7/2">
-                            </div>
-                            <button class="ts-btn-primary" id="ts-load">
-                                <i class="bi bi-database-fill"></i> Load Data
-                            </button>
-                        </section>
-
-                        <!-- Table Selection -->
-                        <section class="ts-section" id="ts-nav-section" style="display:none">
-                            <div class="ts-section-header">
-                                <i class="bi bi-table ts-section-icon"></i>
-                                <span class="ts-section-title">Select Table</span>
-                            </div>
-                            <select class="ts-select" id="ts-table-select"></select>
-                            <div class="ts-table-info" id="ts-table-info" style="display:none">
-                                <div class="ts-table-info-icon"><i class="bi bi-table"></i></div>
-                                <div class="ts-table-info-content">
-                                    <div class="ts-table-info-name" id="ts-info-name">–</div>
-                                    <div class="ts-table-info-meta" id="ts-info-meta">–</div>
-                                </div>
-                                <div class="ts-row-badge" id="ts-info-rows">0 rows</div>
-                            </div>
-                        </section>
-
-                        <!-- Columns (IN SIDEBAR) -->
-                        <section class="ts-section" id="ts-cols-section" style="display:none">
-                            <div class="ts-section-header">
-                                <i class="bi bi-layout-three-columns ts-section-icon"></i>
-                                <span class="ts-section-title">Columns</span>
-                                <button class="ts-section-action" id="ts-cols-toggle-all">Show All</button>
-                            </div>
-                            <div class="ts-col-list" id="ts-col-list"></div>
-                        </section>
-
-                        <!-- Categories -->
-                        <section class="ts-section" id="ts-cat-section" style="display:none">
-                            <div class="ts-section-header">
-                                <i class="bi bi-collection-fill ts-section-icon"></i>
-                                <span class="ts-section-title">Categories</span>
-                                <button class="ts-section-action" id="ts-cat-toggle-all">Show All</button>
-                            </div>
-                            <ul class="ts-toggle-list" id="ts-cat-list"></ul>
-                        </section>
-
-                        <!-- Active Filters -->
-                        <section class="ts-section" id="ts-filters-section" style="display:none">
-                            <div class="ts-section-header">
-                                <i class="bi bi-funnel-fill ts-section-icon"></i>
-                                <span class="ts-section-title">Active Filters</span>
-                                <button class="ts-section-action" id="ts-clear-filters">Clear All</button>
-                            </div>
-                            <div class="ts-filter-chips" id="ts-filter-chips"></div>
-                        </section>
-
-                        <!-- Actions -->
-                        <section class="ts-section">
-                            <div class="ts-btn-group">
-                                <button class="ts-btn-secondary" id="ts-export">
-                                    <i class="bi bi-download"></i> Export
-                                </button>
-                                <button class="ts-btn-secondary" id="ts-reset">
-                                    <i class="bi bi-arrow-counterclockwise"></i> Reset
-                                </button>
-                            </div>
-                        </section>
-                    </div>
-                </aside>
-
-                <!-- MAIN -->
+                <aside class="ts-sidebar" id="ts-sidebar-container"></aside>
                 <main class="ts-main">
-                    <header class="ts-toolbar">
-                        <div class="ts-search-box">
-                            <i class="bi bi-search ts-search-icon"></i>
-                            <input type="text" id="ts-search" class="ts-search" 
-                                placeholder="Search all columns..." 
-                                aria-label="Search all table columns">
-                            <button class="ts-search-clear" id="ts-search-clear" 
-                                aria-label="Clear search">
-                                <i class="bi bi-x"></i>
-                            </button>
-                        </div>
-                        <div class="ts-spacer"></div>
-                        <button class="ts-tb ts-tb-icon" id="ts-refresh" title="Refresh"><i class="bi bi-arrow-clockwise"></i></button>
-                    </header>
-
+                    <header class="ts-toolbar" id="ts-toolbar-container"></header>
                     <div id="ts-alert"></div>
-
-                    <div class="ts-grid" id="ts-grid">
-                        <div class="ts-empty">
-                            <div class="ts-empty-icon"><i class="bi bi-database"></i></div>
-                            <h3 class="ts-empty-title">Select a Table to Begin</h3>
-                            <p class="ts-empty-desc">Enter your Auth Token and Object ID, then click <strong>Load Data</strong>.</p>
-                        </div>
-                    </div>
-
+                    <div class="ts-grid" id="ts-grid-container"></div>
                     <footer class="ts-footer">
                         <div class="ts-status" id="ts-status">Ready</div>
                         <div class="ts-pager" id="ts-pager"></div>
                     </footer>
                 </main>
-
-                <!-- Settings Trigger (Bottom Left) -->
-                <button class="ts-settings-trigger" id="ts-settings-trigger" title="Settings">
-                    <i class="bi bi-gear-fill"></i>
-                </button>
-
-                <!-- Settings Popup -->
-                <div class="ts-settings-popup" id="ts-settings-popup">
+                
+                <!-- Settings Popup moved to absolute positioning managed by CSS relative to button or fixed top right -->
+                <div class="ts-settings-popup" id="ts-settings-popup" style="top: 70px; right: 24px; bottom: auto;">
                     <div class="ts-settings-header">Settings</div>
-                    <div class="ts-settings-body">
+                     <div class="ts-settings-body">
                         <div class="ts-settings-row">
                             <div class="ts-settings-label"><i class="bi bi-moon-stars"></i> Theme</div>
                             <div class="ts-switch ${this.theme === 'dark' ? 'on' : ''}" id="ts-theme-toggle"></div>
@@ -331,505 +116,145 @@ export class TableRenderer {
                         <div class="ts-settings-row">
                             <div class="ts-settings-label"><i class="bi bi-arrows-angle-expand"></i> Density</div>
                             <div class="ts-density-options">
-                                <button class="ts-density-opt ${this.density === 'compact' ? 'active' : ''}" data-density="compact" title="Compact">
-                                    <i class="bi bi-list"></i>
-                                </button>
-                                <button class="ts-density-opt ${this.density === 'default' ? 'active' : ''}" data-density="default" title="Default">
-                                    <i class="bi bi-list-ul"></i>
-                                </button>
-                                <button class="ts-density-opt ${this.density === 'presentation' ? 'active' : ''}" data-density="presentation" title="Presentation">
-                                    <i class="bi bi-card-heading"></i>
-                                </button>
+                                <button class="ts-density-opt ${this.density === 'compact' ? 'active' : ''}" data-density="compact" title="Compact - More rows visible"><i class="bi bi-list"></i></button>
+                                <button class="ts-density-opt ${this.density === 'normal' ? 'active' : ''}" data-density="normal" title="Normal"><i class="bi bi-list-ul"></i></button>
+                                <button class="ts-density-opt ${this.density === 'comfortable' ? 'active' : ''}" data-density="comfortable" title="Comfortable - Easy reading"><i class="bi bi-card-heading"></i></button>
                             </div>
                         </div>
                     </div>
                 </div>
-
-                <!-- Floating Action Bar -->
-                <div class="ts-action-bar" id="ts-action-bar" style="display:none">
-                    <span class="ts-action-bar-count" id="ts-sel-count">0 selected</span>
-                    <button class="ts-action-bar-btn" id="ts-export-selected"><i class="bi bi-download"></i> Export</button>
-                    <button class="ts-action-bar-btn" id="ts-copy-ids"><i class="bi bi-clipboard"></i> Copy IDs</button>
-                    <button class="ts-action-bar-close" id="ts-clear-selection"><i class="bi bi-x"></i></button>
-                </div>
-
-                <div id="ts-tooltip" class="ts-tooltip"></div>
             </div>
         `;
-        this.cacheDom();
+
+        // Settings interactions - Delegated to initComponents()
+        this.dom.status = this.container.querySelector('#ts-status') as HTMLElement;
+        this.dom.pager = this.container.querySelector('#ts-pager') as HTMLElement;
+        this.dom.alert = this.container.querySelector('#ts-alert') as HTMLElement;
     }
 
-    private cacheDom() {
-        this.dom = {
-            app: this.container.querySelector('.ts-app'),
-            apiField: this.container.querySelector('#ts-api-field'),
-            apiSelect: this.container.querySelector('#ts-api-select'),
-            token: this.container.querySelector('#ts-token'),
-            berdl: this.container.querySelector('#ts-berdl'),
-            loadBtn: this.container.querySelector('#ts-load'),
-            navSection: this.container.querySelector('#ts-nav-section'),
-            tableSelect: this.container.querySelector('#ts-table-select'),
-            tableInfo: this.container.querySelector('#ts-table-info'),
-            infoName: this.container.querySelector('#ts-info-name'),
-            infoMeta: this.container.querySelector('#ts-info-meta'),
-            infoRows: this.container.querySelector('#ts-info-rows'),
-            colsSection: this.container.querySelector('#ts-cols-section'),
-            colList: this.container.querySelector('#ts-col-list'),
-            colsToggleAll: this.container.querySelector('#ts-cols-toggle-all'),
-            catSection: this.container.querySelector('#ts-cat-section'),
-            catList: this.container.querySelector('#ts-cat-list'),
-            catToggleAll: this.container.querySelector('#ts-cat-toggle-all'),
-            filtersSection: this.container.querySelector('#ts-filters-section'),
-            filterChips: this.container.querySelector('#ts-filter-chips'),
-            clearFilters: this.container.querySelector('#ts-clear-filters'),
-            search: this.container.querySelector('#ts-search'),
-            searchClear: this.container.querySelector('#ts-search-clear'),
-            refresh: this.container.querySelector('#ts-refresh'),
-            export: this.container.querySelector('#ts-export'),
-            reset: this.container.querySelector('#ts-reset'),
-            alert: this.container.querySelector('#ts-alert'),
-            grid: this.container.querySelector('#ts-grid'),
-            status: this.container.querySelector('#ts-status'),
-            pager: this.container.querySelector('#ts-pager'),
-            settingsTrigger: this.container.querySelector('#ts-settings-trigger'),
-            settingsPopup: this.container.querySelector('#ts-settings-popup'),
-            themeToggle: this.container.querySelector('#ts-theme-toggle'),
-            densityOpts: this.container.querySelectorAll('.ts-density-opt'),
-            actionBar: this.container.querySelector('#ts-action-bar'),
-            selCount: this.container.querySelector('#ts-sel-count'),
-            exportSelected: this.container.querySelector('#ts-export-selected'),
-            copyIds: this.container.querySelector('#ts-copy-ids'),
-            clearSelection: this.container.querySelector('#ts-clear-selection'),
-            tooltip: this.container.querySelector('#ts-tooltip')
-        };
-    }
-
-    private bindEvents() {
-        // Load
-        this.dom.loadBtn?.addEventListener('click', () => this.loadObject());
-        this.dom.berdl?.addEventListener('keypress', (e: KeyboardEvent) => {
-            if (e.key === 'Enter') this.loadObject();
+    private initComponents() {
+        // Sidebar
+        this.sidebar = new Sidebar({
+            container: this.container.querySelector('#ts-sidebar-container') as HTMLElement,
+            configManager: this.configManager,
+            stateManager: this.stateManager,
+            onApiChange: (id) => this.switchApi(id),
+            onLoadData: () => this.loadObject(),
+            onTableChange: (name) => this.switchTable(name),
+            onExport: () => this.exportCsv(),
+            onReset: () => this.reset(),
+            onShowSchema: (name) => this.showDatabaseSchema(name)
         });
+        this.sidebar.mount();
 
-        // Table select
-        this.dom.tableSelect?.addEventListener('change', (e: Event) => {
-            this.switchTable((e.target as HTMLSelectElement).value);
-        });
-
-        // Search
-        let searchTimer: any;
-        this.dom.search?.addEventListener('input', () => {
-            clearTimeout(searchTimer);
-            searchTimer = setTimeout(() => {
-                this.stateManager.update({ searchValue: this.dom.search.value, currentPage: 0 });
+        // Toolbar
+        this.toolbar = new Toolbar({
+            container: this.container.querySelector('#ts-toolbar-container') as HTMLElement,
+            onSearch: (term) => {
+                this.stateManager.update({ searchValue: term, currentPage: 0 });
                 this.fetchData();
-            }, DEBOUNCE_MS);
+            },
+            onRefresh: () => this.softRefresh() // Refresh data but keep filters/sort/selections
         });
+        this.toolbar.mount();
 
-        this.dom.searchClear?.addEventListener('click', () => {
-            this.dom.search.value = '';
-            this.stateManager.update({ searchValue: '', currentPage: 0 });
-            this.fetchData();
-        });
-
-        // Reset
-        this.dom.reset?.addEventListener('click', () => {
-            this.stateManager.update({
-                sortColumn: null, sortOrder: 'asc', searchValue: '', columnFilters: {}, currentPage: 0
+        // Bind Settings Button
+        const settingsBtn = this.toolbar.getSettingsButton();
+        if (settingsBtn) {
+            settingsBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const popup = this.container.querySelector('#ts-settings-popup');
+                popup?.classList.toggle('show');
             });
-            this.dom.search.value = '';
-            this.selectedRows.clear();
-            this.updateActionBar();
-            this.fetchData();
-        });
+        }
 
-        // Refresh
-        this.dom.refresh?.addEventListener('click', () => this.fetchData());
+        // Re-bind Toggle Events since we removed them from renderLayout (or they need to be re-bound if popup is inside container)
+        // Actually, popup IS inside container rendered in renderLayout.
+        // We need to re-attach listeners for Theme/Density because we might have lost them if we re-rendered or just to be safe.
+        // But wait, renderLayout is called ONCE. initComponents is called ONCE.
+        // So the elements exist. We just needed to defer binding until we have the button.
+        // Logic for toggles (Theme/Density):
+        const themeToggle = this.container.querySelector('#ts-theme-toggle');
+        const densityOpts = this.container.querySelectorAll('.ts-density-opt');
+        const app = this.container.querySelector('.ts-app'); // Need to ensure app is available or use container
 
-        // Export
-        this.dom.export?.addEventListener('click', () => this.exportCsv());
-
-        // Clear filters
-        this.dom.clearFilters?.addEventListener('click', () => {
-            this.stateManager.update({ columnFilters: {}, searchValue: '', currentPage: 0 });
-            this.dom.search.value = '';
-            this.fetchData();
-        });
-
-        // Column toggle all
-        this.dom.colsToggleAll?.addEventListener('click', () => {
-            const state = this.stateManager.getState();
-            const allVisible = state.columns.every(c => state.visibleColumns.has(c.column));
-            state.columns.forEach(c => {
-                if (allVisible) state.visibleColumns.delete(c.column);
-                else state.visibleColumns.add(c.column);
-            });
-            this.stateManager.update({ visibleColumns: state.visibleColumns });
-            this.renderColumnList();
-            this.renderTable();
-        });
-
-        // Category toggle all
-        this.dom.catToggleAll?.addEventListener('click', () => {
-            if (this.categoryManager) {
-                const allVisible = this.categoryManager.getAllCategories().every(c => c.visible);
-                this.categoryManager.getAllCategories().forEach(c => {
-                    if (allVisible !== c.visible) return;
-                    this.categoryManager!.toggleCategory(c.id);
-                });
-                this.stateManager.update({ visibleColumns: this.categoryManager.getVisibleColumns() });
-                this.renderCategories();
-                this.renderColumnList();
-                this.renderTable();
-            }
-        });
-
-        // Categories
-        this.dom.catList?.addEventListener('click', (e: Event) => {
-            const item = (e.target as HTMLElement).closest('.ts-toggle-item') as HTMLElement;
-            if (item && this.categoryManager) {
-                const catId = item.dataset.cat;
-                if (catId) {
-                    this.categoryManager.toggleCategory(catId);
-                    this.stateManager.update({ visibleColumns: this.categoryManager.getVisibleColumns() });
-                    this.renderCategories();
-                    this.renderColumnList();
-                    this.renderTable();
-                }
-            }
-        });
-
-        // Settings popup
-        this.dom.settingsTrigger?.addEventListener('click', (e: Event) => {
-            e.stopPropagation();
-            this.dom.settingsPopup?.classList.toggle('show');
-        });
-
-
-        this.dom.apiSelect?.addEventListener('change', (e: Event) => {
-            const apiId = (e.target as HTMLSelectElement).value;
-            this.switchApi(apiId);
-        });
-
-        document.addEventListener('click', (e: Event) => {
-            if (!this.dom.settingsPopup?.contains(e.target as Node)) {
-                this.dom.settingsPopup?.classList.remove('show');
-            }
-        });
-
-        // Theme toggle
-        this.dom.themeToggle?.addEventListener('click', () => {
+        themeToggle?.addEventListener('click', () => {
             this.theme = this.theme === 'light' ? 'dark' : 'light';
-            this.dom.app?.setAttribute('data-theme', this.theme);
-            this.dom.themeToggle?.classList.toggle('on', this.theme === 'dark');
+            app?.setAttribute('data-theme', this.theme);
+            themeToggle.classList.toggle('on', this.theme === 'dark');
             localStorage.setItem('ts-theme', this.theme);
         });
 
-        // Density
-        this.dom.densityOpts?.forEach((btn: Element) => {
+        densityOpts.forEach((btn: any) => {
             btn.addEventListener('click', () => {
-                this.density = (btn as HTMLElement).dataset.density as 'compact' | 'default' | 'presentation';
-                this.dom.app?.setAttribute('data-density', this.density);
-                this.dom.densityOpts.forEach((b: Element) => b.classList.remove('active'));
+                this.density = (btn as HTMLElement).dataset.density as any;
+                app?.setAttribute('data-density', this.density);
+                densityOpts.forEach((b: any) => b.classList.remove('active'));
                 btn.classList.add('active');
                 localStorage.setItem('ts-density', this.density);
             });
         });
 
-        // Grid events
-        this.dom.grid?.addEventListener('click', (e: Event) => {
-            const target = e.target as HTMLElement;
-
-            // Sort
-            const th = target.closest('th.sortable');
-            if (th) {
-                const col = (th as HTMLElement).dataset.col;
-                if (col) {
-                    const state = this.stateManager.getState();
-                    const order = state.sortColumn === col && state.sortOrder === 'asc' ? 'desc' : 'asc';
-                    this.stateManager.update({ sortColumn: col, sortOrder: order, currentPage: 0 });
-                    this.fetchData();
-                }
-                return;
-            }
-
-            // Filter clear
-            const clearBtn = target.closest('.ts-filter-clear');
-            if (clearBtn) {
-                const col = (clearBtn as HTMLElement).dataset.col;
-                if (col) {
-                    const input = this.dom.grid?.querySelector(`.ts-filter-input[data-col="${col}"]`) as HTMLInputElement;
-                    if (input) {
-                        input.value = '';
-                        input.classList.remove('has-value');
-                        input.focus();
-                    }
-                    const state = this.stateManager.getState();
-                    const filters = { ...state.columnFilters };
-                    delete filters[col];
-                    this.stateManager.update({ columnFilters: filters, currentPage: 0 });
-                    this.fetchData();
-                }
-                return;
-            }
-
-            // Copy ID
-            const copyBtn = target.closest('.ts-copy-btn');
-            if (copyBtn) {
-                const text = (copyBtn as HTMLElement).dataset.id;
-                if (text) {
-                    navigator.clipboard.writeText(text);
-                    this.showAlert('Copied to clipboard', 'success');
-                }
-            }
-        });
-
-        // Cell hover tooltips for truncated content
-        this.dom.grid?.addEventListener('mouseover', (e: Event) => {
-            const cell = (e.target as HTMLElement).closest('td');
-            if (cell && cell.scrollWidth > cell.clientWidth) {
-                const textContent = cell.textContent || '';
-                if (textContent.trim().length > 0) {
-                    this.showTooltip(e as MouseEvent, textContent.trim());
-                }
-            }
-        });
-
-        this.dom.grid?.addEventListener('mouseout', (e: Event) => {
-            const cell = (e.target as HTMLElement).closest('td');
-            if (cell) {
-                this.hideTooltip();
-            }
-        });
-
-        this.dom.grid?.addEventListener('mousemove', (e: Event) => {
-            if (this.dom.tooltip?.classList.contains('show')) {
-                this.moveTooltip(e as MouseEvent);
-            }
-        });
-
-        // Filter inputs
-        this.dom.grid?.addEventListener('input', (e: Event) => {
-            const input = e.target as HTMLInputElement;
-            if (input.classList.contains('ts-filter-input')) {
-                input.classList.toggle('has-value', input.value.length > 0);
-                const col = input.dataset.col;
-                if (col) {
-                    clearTimeout((input as any)._debounce);
-                    (input as any)._debounce = setTimeout(() => {
-                        const state = this.stateManager.getState();
-                        const filters = { ...state.columnFilters };
-                        if (input.value.trim()) filters[col] = input.value.trim();
-                        else delete filters[col];
-                        this.stateManager.update({ columnFilters: filters, currentPage: 0 });
-                        this.fetchData();
-                    }, DEBOUNCE_MS);
-                }
-            }
-        });
-
-        // Row selection
-        this.dom.grid?.addEventListener('change', (e: Event) => {
-            const input = e.target as HTMLInputElement;
-            if (input.type === 'checkbox' && input.dataset.rowIdx !== undefined) {
-                const idx = parseInt(input.dataset.rowIdx);
-                if (input.checked) this.selectedRows.add(idx);
-                else this.selectedRows.delete(idx);
-                this.updateActionBar();
-                this.updateRowSelection();
-            }
-            if (input.id === 'ts-select-all') {
-                const state = this.stateManager.getState();
-                if (input.checked) state.data.forEach((_: any, i: number) => this.selectedRows.add(i));
-                else this.selectedRows.clear();
-                this.updateActionBar();
-                this.updateRowSelection();
-            }
-        });
-
-        // Action bar
-        this.dom.clearSelection?.addEventListener('click', () => {
-            this.selectedRows.clear();
-            this.updateActionBar();
-            this.updateRowSelection();
-        });
-        this.dom.exportSelected?.addEventListener('click', () => this.exportSelectedRows());
-        this.dom.copyIds?.addEventListener('click', () => this.copySelectedIds());
-
-        // Pagination
-        this.dom.pager?.addEventListener('click', (e: Event) => {
-            const btn = (e.target as HTMLElement).closest('.ts-page-btn') as HTMLElement;
-            if (btn && !btn.hasAttribute('disabled') && btn.dataset.page) {
-                this.stateManager.update({ currentPage: parseInt(btn.dataset.page) });
+        // DataGrid
+        this.grid = new DataGrid({
+            container: this.container.querySelector('#ts-grid-container') as HTMLElement,
+            stateManager: this.stateManager,
+            onSort: (col, order) => {
+                this.stateManager.update({ sortColumn: col, sortOrder: order, currentPage: 0 });
                 this.fetchData();
-            }
-        });
-
-        // Tooltip
-        this.container.addEventListener('mouseover', (e) => {
-            const td = (e.target as HTMLElement).closest('.ts-table tbody td') as HTMLElement;
-            if (td && td.scrollWidth > td.clientWidth) this.showTooltip(e as MouseEvent, td.innerText);
-        });
-        this.container.addEventListener('mouseout', (e) => {
-            if ((e.target as HTMLElement).closest('.ts-table tbody td')) this.hideTooltip();
-        });
-        this.container.addEventListener('mousemove', (e) => {
-            if (this.dom.tooltip?.classList.contains('show')) this.moveTooltip(e as MouseEvent);
-        });
-    }
-
-    private renderColumnList() {
-        const state = this.stateManager.getState();
-        const list = this.dom.colList;
-        if (!list) return;
-
-        list.innerHTML = '';
-        if (state.columns.length === 0) {
-            list.innerHTML = '<div style="padding:10px;color:var(--text-muted);font-size:11px">No columns</div>';
-            return;
-        }
-
-        const allVisible = state.columns.every(c => state.visibleColumns.has(c.column));
-        if (this.dom.colsToggleAll) {
-            this.dom.colsToggleAll.textContent = allVisible ? 'Hide All' : 'Show All';
-        }
-
-        state.columns.forEach(col => {
-            const div = document.createElement('div');
-            div.className = 'ts-col-item';
-            const checked = state.visibleColumns.has(col.column);
-            div.innerHTML = `<input type="checkbox" ${checked ? 'checked' : ''}><span>${col.displayName || col.column}</span>`;
-            div.querySelector('input')?.addEventListener('change', (e: Event) => {
-                const on = (e.target as HTMLInputElement).checked;
-                if (on) state.visibleColumns.add(col.column);
-                else state.visibleColumns.delete(col.column);
-                this.stateManager.update({ visibleColumns: state.visibleColumns });
-                this.renderTable();
-            });
-            list.appendChild(div);
-        });
-    }
-
-    private renderFilterChips() {
-        const state = this.stateManager.getState();
-        const container = this.dom.filterChips;
-        const section = this.dom.filtersSection;
-        if (!container || !section) return;
-
-        const hasFilters = Object.keys(state.columnFilters).length > 0 || state.searchValue;
-        section.style.display = hasFilters ? 'block' : 'none';
-
-        container.innerHTML = '';
-
-        if (state.searchValue) {
-            const chip = document.createElement('div');
-            chip.className = 'ts-chip';
-            chip.innerHTML = `<span>Search: "${Transformers.escapeHtml(state.searchValue)}"</span><button class="ts-chip-clear" data-type="search"><i class="bi bi-x"></i></button>`;
-            chip.querySelector('button')?.addEventListener('click', () => {
-                this.dom.search.value = '';
-                this.stateManager.update({ searchValue: '', currentPage: 0 });
-                this.fetchData();
-            });
-            container.appendChild(chip);
-        }
-
-        Object.entries(state.columnFilters).forEach(([col, val]) => {
-            const chip = document.createElement('div');
-            chip.className = 'ts-chip';
-            chip.innerHTML = `<span>${col}: "${Transformers.escapeHtml(String(val))}"</span><button class="ts-chip-clear" data-col="${col}"><i class="bi bi-x"></i></button>`;
-            chip.querySelector('button')?.addEventListener('click', () => {
-                const filters = { ...state.columnFilters };
-                delete filters[col];
+            },
+            onFilter: (col, val) => {
+                const filters = { ...this.stateManager.getState().columnFilters };
+                if (val) filters[col] = val;
+                else delete filters[col];
                 this.stateManager.update({ columnFilters: filters, currentPage: 0 });
-                const input = this.dom.grid?.querySelector(`.ts-filter-input[data-col="${col}"]`) as HTMLInputElement;
-                if (input) { input.value = ''; input.classList.remove('has-value'); }
                 this.fetchData();
-            });
-            container.appendChild(chip);
+            },
+            onRowSelect: (_idx, _selected, _all) => {
+                // Update status bar with selection count
+                this.updateSelectionStatus();
+            }
         });
+        this.grid.mount();
+
     }
 
-    private updateActionBar() {
-        if (!this.dom.actionBar) return;
-        const count = this.selectedRows.size;
-        this.dom.actionBar.style.display = count > 0 ? 'flex' : 'none';
-        this.dom.selCount.textContent = `${count} selected`;
-    }
+    // --- Logic Moved from Monolith ---
 
-    private updateRowSelection() {
-        this.dom.grid?.querySelectorAll('tbody tr').forEach((tr: Element, idx: number) => {
-            tr.classList.toggle('selected', this.selectedRows.has(idx));
-            const cb = tr.querySelector('input[type="checkbox"]') as HTMLInputElement;
-            if (cb) cb.checked = this.selectedRows.has(idx);
-        });
-        const selectAll = this.dom.grid?.querySelector('#ts-select-all') as HTMLInputElement;
-        if (selectAll) {
-            const state = this.stateManager.getState();
-            selectAll.checked = this.selectedRows.size === state.data.length && state.data.length > 0;
-        }
-    }
-
-    // Data methods
     private async loadObject() {
-        const berdl = (this.dom.berdl as HTMLInputElement).value.trim();
-        const token = (this.dom.token as HTMLInputElement).value.trim();
+        const token = this.sidebar.getToken();
+        const berdl = this.sidebar.getBerdlId(); // Should expose these
 
-        // Validation
-        if (!token) {
-            this.showAlert('Auth token is required', 'warning');
-            this.dom.token?.focus();
-            return;
-        }
-        if (!berdl) {
-            this.showAlert('Object ID is required', 'warning');
-            this.dom.berdl?.focus();
-            return;
+        if (berdl === 'test/test/test') {
+            this.switchApi('test_data');
+        } else {
+            this.switchApi('default');
+            if (!token) { this.showAlert('Auth token required', 'danger'); return; }
         }
 
-        // Support UPAs (W/O/V), versioned UPAs (W/O/V/v), and UUIDs
-        const isUPA = /^\d+\/\d+(\/\d+)?(\/\d+)?$/.test(berdl);
-        const isLongID = /^[a-f0-9-]{30,}$/i.test(berdl);
-
-        // Very permissive check for researcher IDs - if it has a slash or is long, allow it
-        if (!isUPA && !isLongID && !berdl.includes('/') && berdl.length < 5) {
-            this.showAlert('Invalid Object ID format (expected UPA like 76990/7/2 or UUID)', 'warning');
-            this.dom.berdl?.focus();
-            return;
-        }
+        if (!berdl) { this.showAlert('Object ID required', 'danger'); return; }
 
         this.client.setToken(token);
         this.stateManager.update({ berdlTableId: berdl, loading: true, error: null });
-        this.dom.navSection.style.display = 'none';
-        this.dom.catSection.style.display = 'none';
-        this.dom.colsSection.style.display = 'none';
 
         try {
             const res = await this.client.listTables(berdl);
-
-            // Validate data type
             const detectedType = this.registry.detectDataType(res);
-            if (detectedType) {
-                console.log(`Detected data type: ${detectedType}`);
-                this.configManager.setCurrentDataType(detectedType);
-            } else {
-                console.warn('Could not detect specific data type, using default config');
-                // Don't crash, just proceed with generic rendering
-            }
+            if (detectedType) this.configManager.setCurrentDataType(detectedType);
 
             const tables = res.tables || [];
             this.stateManager.update({ availableTables: tables });
 
             if (tables.length === 0) { this.showAlert('No tables found', 'warning'); return; }
 
-
-            this.populateTableSelect(tables);
-            this.dom.navSection.style.display = 'block';
+            this.sidebar.updateTables(tables);
 
             const initialTable = (this as any)._initialTable;
             const targetTable = initialTable && tables.find((t: any) => t.name === initialTable)
                 ? initialTable : tables[0].name;
-            this.dom.tableSelect.value = targetTable;
+
             this.switchTable(targetTable);
+
         } catch (e: any) {
             this.showAlert(e.message, 'danger');
         } finally {
@@ -837,45 +262,22 @@ export class TableRenderer {
         }
     }
 
-    private populateTableSelect(tables: any[]) {
-        const sel = this.dom.tableSelect;
-        if (!sel) return;
-        sel.innerHTML = '';
-        tables.forEach((t: any) => {
-            const opt = document.createElement('option');
-            opt.value = t.name;
-            // Support both 'count' (legacy/mock) and 'row_count' (actual API)
-            const countValue = t.row_count ?? t.count;
-            const count = typeof countValue === 'number' ? countValue.toLocaleString() : '?';
-            opt.textContent = `${t.displayName || t.name} (${count} rows)`;
-            sel.appendChild(opt);
-        });
-    }
-
     private async switchTable(name: string) {
-        const state = this.stateManager.getState();
-        const info = state.availableTables.find((t: any) => t.name === name);
-
-        if (info) {
-            this.dom.tableInfo.style.display = 'flex';
-            this.dom.infoName.textContent = name;
-            const cols = typeof info.column_count === 'number' ? info.column_count : '?';
-            const rows = typeof info.count === 'number' ? info.count.toLocaleString() : '?';
-            this.dom.infoMeta.textContent = `${cols} columns`;
-            this.dom.infoRows.textContent = `${rows} rows`;
-        }
-
         this.stateManager.update({ activeTableName: name });
         const config = this.configManager.getTableConfig(name);
         this.categoryManager = new CategoryManager(config);
+
+        // Pass category manager to sidebar
+        this.sidebar.setCategoryManager(this.categoryManager);
+        this.sidebar.updateTableInfo(name);
 
         this.stateManager.update({
             currentPage: 0, sortColumn: null, columnFilters: {}, searchValue: '',
             data: [], headers: [], columns: []
         });
-        this.dom.search.value = '';
-        this.selectedRows.clear();
-        this.updateActionBar();
+
+        this.toolbar.setSearch('');
+        this.grid.clearSelection(); // Grid method
 
         await this.fetchData();
     }
@@ -899,16 +301,18 @@ export class TableRenderer {
             });
 
             this.processColumns(res.headers, state.activeTableName);
-            this.stateManager.update({
-                headers: res.headers, data: res.data || [], totalCount: res.total_count || 0
+
+            // Convert Array-of-Arrays to Array-of-Objects for Internal State
+            const dataObjects = (res.data || []).map((row: any[]) => {
+                const obj: Record<string, any> = {};
+                res.headers.forEach((h, i) => { obj[h] = row[i]; });
+                return obj;
             });
 
-            this.selectedRows.clear();
-            this.updateActionBar();
-            this.dom.colsSection.style.display = 'block';
-            this.renderColumnList();
-            this.renderCategories();
-            this.renderTable();
+            this.stateManager.update({
+                headers: res.headers, data: dataObjects, totalCount: res.total_count || 0
+            });
+            // Grid automatically re-renders on state update
         } catch (e: any) {
             this.showAlert(e.message, 'danger');
         } finally {
@@ -941,240 +345,435 @@ export class TableRenderer {
         }
     }
 
-    private renderCategories() {
-        if (!this.categoryManager || !this.dom.catList) return;
-        const cats = this.categoryManager.getAllCategories();
-        this.dom.catList.innerHTML = '';
-
-        if (cats.length === 0) { this.dom.catSection.style.display = 'none'; return; }
-
-        this.dom.catSection.style.display = 'block';
-        const allVisible = cats.every(c => c.visible);
-        if (this.dom.catToggleAll) this.dom.catToggleAll.textContent = allVisible ? 'Hide All' : 'Show All';
-
-        cats.forEach(cat => {
-            const li = document.createElement('li');
-            li.className = `ts-toggle-item ${cat.visible ? 'active' : ''}`;
-            li.dataset.cat = cat.id;
-            li.innerHTML = `
-                <div class="ts-toggle-label">
-                    <i class="${cat.icon || 'bi bi-folder-fill'}" style="color:${cat.color || 'var(--accent)'}"></i>
-                    <span>${cat.name}</span>
-                </div>
-                <div class="ts-switch ${cat.visible ? 'on' : ''}"></div>
-            `;
-            this.dom.catList.appendChild(li);
-        });
+    private switchApi(apiId: string) {
+        const apiConfig = this.configManager.getApi(apiId);
+        if (apiConfig) {
+            this.client.updateConfig(apiConfig as any);
+            this.reset();
+        }
     }
 
-    private renderTable() {
+    /**
+     * Soft refresh - re-fetches data while preserving the current view state
+     * (filters, sort, page, selections). Use for "Refresh" button.
+     */
+    private softRefresh() {
+        this.fetchData();
+    }
+
+    /**
+     * Full reset - clears all filters, sort, search, and goes back to page 1.
+     * Use for "Reset" button in sidebar.
+     */
+    private reset() {
+        // Clear any pending filter debounce timers first
+        this.grid.clearFilterFocus();
+
+        this.stateManager.update({
+            sortColumn: null, sortOrder: 'asc', searchValue: '', columnFilters: {}, currentPage: 0
+        });
+        this.toolbar.setSearch('');
+        this.grid.clearSelection();
+        this.sidebar.renderFilterChips(); // Update filter chips display
+        this.fetchData();
+    }
+
+    private async exportCsv() {
         const state = this.stateManager.getState();
-        const grid = this.dom.grid;
-        if (!grid) return;
+        if (state.data.length === 0) return;
 
-        if (state.columns.length === 0) {
-            grid.innerHTML = `<div class="ts-empty"><div class="ts-empty-icon"><i class="bi bi-inbox"></i></div><h3 class="ts-empty-title">No Data</h3><p class="ts-empty-desc">Select a table from the sidebar.</p></div>`;
-            return;
-        }
+        // Check for selection
+        const selection = this.grid.getSelection();
+        const hasSelection = selection.size > 0;
+        const dataToExport = hasSelection
+            ? state.data.filter((_, idx) => selection.has(idx))
+            : state.data;
 
-        const cols = state.columns.filter(c => state.visibleColumns.has(c.column));
-        if (cols.length === 0) {
-            grid.innerHTML = `<div class="ts-empty"><div class="ts-empty-icon"><i class="bi bi-eye-slash"></i></div><h3 class="ts-empty-title">All Columns Hidden</h3><p class="ts-empty-desc">Enable columns in the sidebar.</p></div>`;
-            return;
-        }
-
-        const searchTerm = state.searchValue.toLowerCase();
-        let html = '<table class="ts-table"><thead><tr>';
-
-        html += '<th class="ts-col-select ts-col-fixed"><input type="checkbox" id="ts-select-all"></th>';
-        if (state.showRowNumbers) html += '<th class="ts-col-num ts-col-fixed">#</th>';
-
-        cols.forEach((c, idx) => {
-            const isFirst = idx === 0 && !state.showRowNumbers;
-            const fixed = isFirst ? 'ts-col-fixed' : '';
-            const sortable = c.sortable ? 'sortable' : '';
-            let icon = state.sortColumn === c.column ? (state.sortOrder === 'asc' ? ' <i class="bi bi-sort-up"></i>' : ' <i class="bi bi-sort-down"></i>') : '';
-            html += `<th class="${fixed} ${sortable}" data-col="${c.column}" style="width:${c.width}">${c.displayName || c.column}${icon}</th>`;
+        await exportManager.export(dataToExport, {
+            format: 'csv',
+            filename: `export_${state.activeTableName || 'data'}_${new Date().toISOString().split('T')[0]}`,
+            columns: state.columns
+                .filter(c => state.visibleColumns.has(c.column))
+                .map(c => ({ key: c.column, header: c.displayName || c.column })),
+            includeHeaders: true
         });
+    }
 
-        html += '</tr><tr class="ts-filter-row">';
-        html += '<th class="ts-col-select ts-col-fixed"></th>';
-        if (state.showRowNumbers) html += '<th class="ts-col-num ts-col-fixed"></th>';
+    private onStateChange(state: AppState) {
+        // Update footer stats
+        this.updateStatusBar(state);
+        this.updatePagination(state);
+        this.syncStateToUrl();
+        if (state.error) this.showAlert(state.error, 'danger');
+    }
 
-        cols.forEach((c, idx) => {
-            const isFirst = idx === 0 && !state.showRowNumbers;
-            const fixed = isFirst ? 'ts-col-fixed' : '';
-            const val = state.columnFilters[c.column] || '';
-            html += `<th class="${fixed}">`;
-            if (c.filterable !== false) {
-                html += `<div class="ts-filter-wrap"><input class="ts-filter-input ${val ? 'has-value' : ''}" data-col="${c.column}" value="${Transformers.escapeHtml(val)}" placeholder="Filter..."><button class="ts-filter-clear" data-col="${c.column}"><i class="bi bi-x"></i></button></div>`;
-            }
-            html += '</th>';
-        });
+    private updateStatusBar(state: AppState) {
+        if (!this.dom.status) return;
 
-        html += '</tr></thead><tbody>';
+        let statusHtml = '';
 
-        if (state.data.length === 0) {
-            const span = cols.length + (state.showRowNumbers ? 2 : 1);
-            html += `<tr><td colspan="${span}" style="text-align:center;padding:32px;color:var(--text-muted)"><i class="bi bi-search" style="font-size:20px;opacity:.3;display:block;margin-bottom:6px"></i>No matching records</td></tr>`;
-        } else {
+        if (state.totalCount > 0) {
             const start = state.currentPage * state.pageSize + 1;
-            state.data.forEach((row: any[], i: number) => {
-                const obj = this.rowToObj(row);
-                const selected = this.selectedRows.has(i);
-                html += `<tr class="${selected ? 'selected' : ''}">`;
-                html += `<td class="ts-col-select ts-col-fixed"><input type="checkbox" data-row-idx="${i}" ${selected ? 'checked' : ''}></td>`;
-                if (state.showRowNumbers) html += `<td class="ts-col-num ts-col-fixed">${start + i}</td>`;
+            const end = Math.min((state.currentPage + 1) * state.pageSize, state.totalCount);
+            statusHtml = `Showing <strong>${start.toLocaleString()}</strong> – <strong>${end.toLocaleString()}</strong> of <strong>${state.totalCount.toLocaleString()}</strong> rows`;
 
-                cols.forEach((c, idx) => {
-                    const isFirst = idx === 0 && !state.showRowNumbers;
-                    const fixed = isFirst ? 'ts-col-fixed' : '';
-                    const raw = obj[c.column];
-                    let content = '';
-                    if (c.transform) content = Transformers.apply(raw, c.transform, obj);
-                    else if (c.column.includes('ID') || c.column === 'ID') {
-                        const esc = Transformers.escapeHtml(raw);
-                        content = `<span class="ts-copy-id"><span class="ts-mono">${esc}</span><button class="ts-copy-btn" data-id="${esc}"><i class="bi bi-clipboard"></i></button></span>`;
-                    } else content = Transformers.escapeHtml(raw);
-                    if (searchTerm) content = this.highlightText(content, searchTerm);
-                    html += `<td class="${fixed}">${content}</td>`;
-                });
-                html += '</tr>';
-            });
+            // Add selection count if any
+            const selectionCount = this.grid?.getSelection()?.size || 0;
+            if (selectionCount > 0) {
+                statusHtml += ` <span class="ts-selection-info">• ${selectionCount} selected</span>`;
+            }
+        } else {
+            statusHtml = 'Ready';
         }
 
-        html += '</tbody></table>';
-        grid.innerHTML = html;
+        this.dom.status.innerHTML = statusHtml;
     }
 
-    private highlightText(html: string, term: string): string {
-        if (!term) return html;
-        const regex = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-        return html.replace(regex, '<mark class="highlight">$1</mark>');
-    }
-
-    private rowToObj(row: any[]) {
-        const headers = this.stateManager.getState().headers;
-        const obj: any = {};
-        headers.forEach((h, i) => { obj[h] = row[i]; });
-        return obj;
+    private updateSelectionStatus() {
+        const state = this.stateManager.getState();
+        this.updateStatusBar(state);
     }
 
     private updatePagination(state: AppState) {
-        const pager = this.dom.pager;
-        if (!pager) return;
+        if (!this.dom.pager) return;
         const total = Math.ceil(state.totalCount / state.pageSize);
         const curr = state.currentPage;
-        pager.innerHTML = `
+
+        this.dom.pager.innerHTML = `
             <button class="ts-page-btn" data-page="${curr - 1}" ${curr <= 0 ? 'disabled' : ''}><i class="bi bi-chevron-left"></i></button>
             <span class="ts-page-info">${curr + 1} / ${total || 1}</span>
             <button class="ts-page-btn" data-page="${curr + 1}" ${curr >= total - 1 ? 'disabled' : ''}><i class="bi bi-chevron-right"></i></button>
         `;
+
+        // Bind click events locally
+        this.dom.pager.querySelectorAll('.ts-page-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const page = parseInt((btn as HTMLElement).dataset.page || '0');
+                if (page >= 0 && page < total) {
+                    this.stateManager.update({ currentPage: page });
+                    this.fetchData();
+                }
+            });
+        });
     }
 
-    private exportCsv() {
+    private syncStateToUrl() {
         const state = this.stateManager.getState();
-        if (state.data.length === 0) return;
+        const params = new URLSearchParams();
+        if (state.activeTableName) params.set('table', state.activeTableName);
+        if (state.sortColumn) params.set('sort', `${state.sortColumn}:${state.sortOrder}`);
+        if (state.currentPage > 0) params.set('page', String(state.currentPage + 1));
+        const newUrl = params.toString() ? `?${params.toString()}` : window.location.pathname;
+        window.history.replaceState({}, '', newUrl);
+    }
 
-        // Show loading state
-        const btn = this.dom.export;
-        const originalHTML = btn?.innerHTML;
-        if (btn) {
-            btn.innerHTML = '<span class="ts-spinner"></span> Exporting...';
-            btn.disabled = true;
-        }
+    private loadStateFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        const table = params.get('table');
+        if (table) (this as any)._initialTable = table;
+    }
 
-        // Use setTimeout to allow UI to update
-        setTimeout(() => {
-            try {
-                this.downloadCsv(state.data, `${state.activeTableName || 'data'}.csv`);
-                this.showAlert(`Exported ${state.data.length} rows`, 'success');
-            } catch (error) {
-                this.showAlert('Export failed', 'danger');
-            } finally {
-                if (btn && originalHTML) {
-                    btn.innerHTML = originalHTML;
-                    btn.disabled = false;
+    private async loadConfiguration() {
+        // Existing load logic (simplified for brevity, assume similar to before)
+        const newConfigUrl = '/config/index.json';
+        try {
+            const res = await fetch(newConfigUrl);
+            if (res.ok) {
+                const appConfig = await res.json();
+                if (appConfig.dataTypes) {
+                    await this.registry.initialize(appConfig);
+                    this.configManager = new ConfigManager(appConfig);
+                    return;
                 }
             }
-        }, 50);
+        } catch { }
+
+        let config: any = {};
+        if (this.configUrl) {
+            try { const res = await fetch(this.configUrl); if (res.ok) config = await res.json(); } catch { }
+        }
+        if (!Object.keys(config).length && (window as any).DEFAULT_CONFIG) config = (window as any).DEFAULT_CONFIG;
+        this.configManager = new ConfigManager(config);
     }
 
-    private exportSelectedRows() {
-        const state = this.stateManager.getState();
-        const selectedData = state.data.filter((_: any, i: number) => this.selectedRows.has(i));
-        if (selectedData.length === 0) return;
-        this.downloadCsv(selectedData, `${state.activeTableName} _selected.csv`);
-        this.showAlert(`Exported ${selectedData.length} rows`, 'success');
-    }
-
-    private downloadCsv(data: any[], filename: string) {
-        const state = this.stateManager.getState();
-        const cols = state.columns.filter(c => state.visibleColumns.has(c.column)).map(c => c.column);
-        const rows = data.map((r: any[]) => {
-            const obj = this.rowToObj(r);
-            return cols.map(c => `"${String(obj[c] ?? '').replace(/"/g, '""')}"`).join(',');
-        });
-        const csv = [cols.join(','), ...rows].join('\n');
-        const blob = new Blob([csv], { type: 'text/csv' });
-        const link = document.createElement('a');
-        link.href = URL.createObjectURL(blob);
-        link.download = filename;
-        link.click();
-    }
-
-    private copySelectedIds() {
-        const state = this.stateManager.getState();
-        const idCol = state.columns.find(c => c.column.includes('ID') || c.column === 'ID');
-        if (!idCol) { this.showAlert('No ID column', 'warning'); return; }
-        const ids = state.data.filter((_: any, i: number) => this.selectedRows.has(i)).map((r: any[]) => this.rowToObj(r)[idCol.column]).join('\n');
-        navigator.clipboard.writeText(ids);
-        this.showAlert(`Copied ${this.selectedRows.size} IDs`, 'success');
-    }
-
-    private showAlert(msg: string, type: 'danger' | 'warning' | 'success') {
+    private showAlert(msg: string, type: string) {
         if (this.dom.alert) {
-            const icons = { success: 'check-circle-fill', warning: 'exclamation-triangle-fill', danger: 'x-circle-fill' };
-            this.dom.alert.innerHTML = `<div class="ts-alert ts-alert-${type}"><i class="bi bi-${icons[type]}"></i> ${msg}</div>`;
+            this.dom.alert.innerHTML = `<div class="ts-alert ts-alert-${type}">${msg}</div>`;
             setTimeout(() => { if (this.dom.alert) this.dom.alert.innerHTML = ''; }, 4000);
         }
     }
 
-    private showTooltip(e: MouseEvent, text: string) {
-        if (this.dom.tooltip) { this.dom.tooltip.textContent = text; this.dom.tooltip.classList.add('show'); this.moveTooltip(e); }
-    }
 
-    private moveTooltip(e: MouseEvent) {
-        if (this.dom.tooltip) { this.dom.tooltip.style.left = (e.clientX + 10) + 'px'; this.dom.tooltip.style.top = (e.clientY + 10) + 'px'; }
-    }
+    private showDatabaseSchema(initialTable?: string) {
+        const state = this.stateManager.getState();
+        const tables = state.availableTables || [];
 
-    private hideTooltip() {
-        if (this.dom.tooltip) this.dom.tooltip.classList.remove('show');
-    }
+        // Define internal renderers using CSS variables from design system
+        const renderSidebar = (active: string | null) => `
+            <div class="glass-sidebar" style="width:260px;display:flex;flex-direction:column;">
+                <div style="padding:20px;border-bottom:1px solid var(--c-border-subtle)">
+                    <h3 style="font-size:11px;text-transform:uppercase;color:var(--c-text-muted);font-weight:700;letter-spacing:0.08em;display:flex;align-items:center;gap:8px">
+                        <i class="bi bi-database" style="font-size:14px"></i> Database Schema
+                    </h3>
+                </div>
+                <div style="flex:1;overflow-y:auto;padding:12px">
+                    <div class="ts-nav-item ${!active ? 'active' : ''}" data-target="__overview__">
+                        <i class="bi bi-grid-1x2"></i> Overview
+                    </div>
+                    <div style="margin-top:12px;margin-bottom:8px;padding:0 14px">
+                        <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--c-text-muted);font-weight:600">Tables (${tables.length})</span>
+                    </div>
+                    ${tables.map((t: any) => `
+                        <div class="ts-nav-item ${active === t.name ? 'active' : ''}" data-target="${t.name}">
+                            <i class="bi bi-table"></i> 
+                            <span style="flex:1">${t.name}</span>
+                            <span style="font-size:11px;color:var(--c-text-muted)">${(t.row_count || 0).toLocaleString()}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `;
 
-    private initApiSelector() {
-        const apis = this.configManager.getApis();
-        if (apis.length > 1 && this.dom.apiField && this.dom.apiSelect) {
-            this.dom.apiField.style.display = 'block';
-            this.dom.apiSelect.innerHTML = apis.map(api =>
-                `<option value="${api.id}" ${api.id === this.currentApiId ? 'selected' : ''}>${api.name}</option>`
-            ).join('');
+        const renderOverview = () => {
+            const totalTables = tables.length;
+            const totalRecords = tables.reduce((acc: number, t: any) => acc + (t.row_count || 0), 0);
+
+            return `
+                <div style="padding:48px;max-width:900px;margin:0 auto">
+                    <div style="text-align:center;margin-bottom:48px">
+                        <div style="width:80px;height:80px;background:linear-gradient(135deg, var(--c-accent-light) 0%, var(--c-accent-glow) 100%);color:var(--c-accent);border-radius:20px;display:flex;align-items:center;justify-content:center;font-size:40px;margin:0 auto 20px;box-shadow:0 8px 24px var(--c-accent-glow)">
+                            <i class="bi bi-database"></i>
+                        </div>
+                        <h2 style="font-size:28px;font-weight:700;color:var(--c-text-primary);margin-bottom:8px">Database Overview</h2>
+                        <p style="color:var(--c-text-secondary);font-size:14px">${state.berdlTableId || 'Connected Database'}</p>
+                    </div>
+
+                    <div style="display:grid;grid-template-columns:repeat(2, 1fr);gap:20px;margin-bottom:48px">
+                        <div class="glass-panel" style="padding:28px;text-align:center">
+                            <div style="font-size:13px;color:var(--c-text-muted);margin-bottom:8px;font-weight:500">Total Tables</div>
+                            <div style="font-size:40px;font-weight:700;color:var(--c-text-primary)">${totalTables}</div>
+                        </div>
+                        <div class="glass-panel" style="padding:28px;text-align:center">
+                            <div style="font-size:13px;color:var(--c-text-muted);margin-bottom:8px;font-weight:500">Total Records</div>
+                            <div style="font-size:40px;font-weight:700;color:var(--c-text-primary)">${totalRecords.toLocaleString()}</div>
+                        </div>
+                    </div>
+
+                    <h3 style="font-size:12px;font-weight:700;margin-bottom:20px;color:var(--c-text-muted);text-transform:uppercase;letter-spacing:0.08em">Available Tables</h3>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fill, minmax(280px, 1fr));gap:16px">
+                        ${tables.map((t: any) => `
+                            <div class="ts-card-nav" data-target="${t.name}">
+                                <div style="width:44px;height:44px;background:var(--c-accent-light);border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--c-accent);font-size:20px"><i class="bi bi-table"></i></div>
+                                <div style="flex:1">
+                                    <div style="font-weight:600;font-size:14px;color:var(--c-text-primary)">${t.name}</div>
+                                    <div style="font-size:12px;color:var(--c-text-muted);margin-top:2px">${(t.row_count || 0).toLocaleString()} records</div>
+                                </div>
+                                <i class="bi bi-chevron-right" style="font-size:14px;color:var(--c-text-muted)"></i>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        };
+
+        const renderTableDetail = (name: string) => {
+            const config = this.configManager.getTableConfig(name);
+            const isLive = state.activeTableName === name;
+            const columns = isLive ? state.columns : (config.columns || []);
+
+            const tableTitle = config?.name || name;
+            const tableDesc = config?.settings?.description || 'No description available for this table.';
+
+            return `
+                <div style="padding:40px;max-width:960px;margin:0 auto">
+                    <div style="margin-bottom:36px">
+                        <div style="display:flex;align-items:flex-start;gap:20px">
+                            <div style="width:64px;height:64px;border-radius:16px;background:linear-gradient(135deg, var(--c-accent-light) 0%, var(--c-accent-glow) 100%);color:var(--c-accent);display:flex;align-items:center;justify-content:center;font-size:32px;flex-shrink:0;box-shadow:0 4px 16px var(--c-accent-glow)">
+                                <i class="${config?.settings?.icon || 'bi bi-table'}"></i>
+                            </div>
+                            <div style="flex:1">
+                                <h2 style="font-size:24px;font-weight:700;color:var(--c-text-primary);margin:0 0 8px 0">${tableTitle}</h2>
+                                <div style="font-size:14px;color:var(--c-text-secondary);line-height:1.6;margin-bottom:16px;max-width:600px">
+                                    ${tableDesc}
+                                </div>
+                                <div style="display:flex;gap:20px;font-size:13px;color:var(--c-text-muted)">
+                                    <span style="display:flex;align-items:center;gap:6px"><i class="bi bi-layout-three-columns"></i> ${columns.length} Columns</span>
+                                    ${isLive ? `<span style="display:flex;align-items:center;gap:6px"><i class="bi bi-list-ol"></i> ${state.totalCount?.toLocaleString()} Records</span>` : ''}
+                                    <span style="display:flex;align-items:center;gap:6px"><i class="bi bi-${isLive ? 'check-circle-fill" style="color:var(--success)' : 'circle'}"></i> ${isLive ? 'Currently Loaded' : 'Not Loaded'}</span>
+                                </div>
+                            </div>
+                            <button id="ts-export-current" class="ts-btn-secondary" data-table="${name}" style="height:40px;padding:0 20px">
+                                <i class="bi bi-download"></i> Export Schema
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="glass-panel" style="overflow:hidden">
+                        <div style="padding:14px 20px;border-bottom:1px solid var(--c-border-subtle);display:flex;justify-content:space-between;align-items:center;background:rgba(248,250,252,0.3)">
+                            <h4 style="margin:0;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--c-text-muted);display:flex;align-items:center;gap:8px">
+                                <i class="bi bi-list-columns-reverse"></i> Schema Definition
+                            </h4>
+                            <div style="position:relative">
+                                <input type="text" id="ts-schema-filter" placeholder="Search columns..." style="background:var(--c-bg-input);border:1px solid var(--c-border-subtle);border-radius:var(--radius-sm);font-size:12px;padding:6px 12px 6px 32px;width:220px;outline:none;color:var(--c-text-primary)">
+                                <i class="bi bi-search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:12px;color:var(--c-text-muted)"></i>
+                            </div>
+                        </div>
+                        <div id="ts-schema-items-container" style="max-height:55vh;overflow-y:auto">
+                            ${columns.length === 0 ? '<div style="padding:48px;text-align:center;color:var(--c-text-muted)"><i class="bi bi-info-circle" style="font-size:24px;display:block;margin-bottom:12px;opacity:0.5"></i>No column information available. Load this table to see details.</div>' :
+                    columns.map(c => this.renderSchemaItem(c)).join('')}
+                        </div>
+                    </div>
+                </div>
+             `;
+        };
+
+        const layout = `
+            <div style="display:flex;height:100%;overflow:hidden">
+                <div id="ts-schema-sidebar">
+                    ${renderSidebar(initialTable || null)}
+                </div>
+                <div id="ts-schema-main" style="flex:1;overflow-y:auto;background:var(--c-bg-app-solid);position:relative">
+                    ${initialTable ? renderTableDetail(initialTable) : renderOverview()}
+                </div>
+            </div>
+        `;
+
+        const modal = this.createModal('Database Explorer', layout);
+        const modalBody = modal.querySelector('.ts-modal-body') as HTMLElement;
+        if (modalBody) {
+            // Override padding for full bleed
+            modalBody.style.padding = '0';
+            modalBody.style.height = 'calc(80vh - 60px)';
+            const inner = modalBody.querySelector('div');
+            if (inner) inner.style.padding = '0';
         }
-    }
 
-    private switchApi(apiId: string) {
-        const apiConfig = this.configManager.getApi(apiId);
-        if (apiConfig) {
-            this.currentApiId = apiId;
-            this.client.updateConfig(apiConfig as any);
-            console.log(`Switched API to ${apiConfig.name} (${apiConfig.url})`);
+        const updateView = (target: string) => {
+            const sidebar = modal.querySelector('#ts-schema-sidebar');
+            const main = modal.querySelector('#ts-schema-main');
+            if (sidebar) sidebar.innerHTML = renderSidebar(target === '__overview__' ? null : target);
+            if (main) {
+                main.innerHTML = target === '__overview__' ? renderOverview() : renderTableDetail(target);
+                main.scrollTop = 0;
+            }
+            bindEvents();
+        };
 
-            // Optional: reset state or clear loaded data
-            this.stateManager.update({
-                error: null,
-                loading: false,
-                // Don't necessarily clear berdl/token as they might be valid across envs (e.g. dev/prod)
+        const bindEvents = () => {
+            const navItems = modal.querySelectorAll('.ts-nav-item, .ts-card-nav');
+
+            navItems.forEach(el => {
+                el.addEventListener('click', () => {
+                    const target = (el as HTMLElement).dataset.target;
+                    if (target) updateView(target);
+                });
             });
-        }
+
+            const input = modal.querySelector('#ts-schema-filter') as HTMLInputElement;
+            const container = modal.querySelector('#ts-schema-items-container');
+            if (input && container) {
+                input.addEventListener('input', () => {
+                    const term = input.value.toLowerCase();
+                    const items = container.querySelectorAll('.ts-schema-item');
+                    items.forEach(item => {
+                        const text = (item.textContent || '').toLowerCase();
+                        (item as HTMLElement).style.display = text.includes(term) ? 'flex' : 'none';
+                    });
+                });
+            }
+
+            const exp = modal.querySelector('#ts-export-current');
+            exp?.addEventListener('click', () => {
+                const table = (exp as HTMLElement).dataset.table;
+                if (!table) return;
+                const config = this.configManager.getTableConfig(table);
+                const cols = (state.activeTableName === table) ? state.columns : (config.columns || []);
+
+                const schemaData = JSON.stringify(config || { tableName: table, columns: cols }, null, 2);
+                const blob = new Blob([schemaData], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${table}_schema.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            });
+        };
+
+        bindEvents();
+    }
+
+
+    private renderSchemaItem(c: any) {
+        const badges = [];
+        if (c.sortable) badges.push({ l: 'Sortable', bg: '#dbeafe', fg: '#1d4ed8' });
+        if (c.filterable) badges.push({ l: 'Filterable', bg: '#d1fae5', fg: '#059669' });
+        if (c.copyable) badges.push({ l: 'Copyable', bg: '#e2e8f0', fg: '#475569' });
+        if (c.pin) badges.push({ l: 'Pinned', bg: '#ede9fe', fg: '#7c3aed' });
+
+        const badgeHtml = badges.map(b =>
+            `<span style="font-size:10px;padding:3px 8px;border-radius:4px;background:${b.bg};color:${b.fg};margin-right:6px;font-weight:500">${b.l}</span>`
+        ).join('');
+
+        return `
+            <div class="ts-schema-item">
+                <div style="padding-top:4px;flex-shrink:0">
+                    <i class="bi bi-hash" style="color:var(--c-accent);font-size:16px"></i>
+                </div>
+                <div style="flex:1;min-width:0">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;gap:12px">
+                        <span class="ts-schema-name">${c.displayName || c.column}</span>
+                        <span class="ts-schema-type">${c.dataType || 'string'}</span>
+                    </div>
+                    ${c.description ? `<div class="ts-schema-desc">${c.description}</div>` : ''}
+                    <div style="display:flex;align-items:center;margin-top:8px;flex-wrap:wrap;gap:4px">
+                        ${badgeHtml}
+                        <span style="font-size:11px;color:var(--c-text-muted);font-family:'JetBrains Mono',monospace;margin-left:auto">col: ${c.column}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    private createModal(title: string, bodyHtml: string): HTMLElement {
+        // Remove existing
+        const existing = document.querySelector('.ts-modal-overlay');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.className = 'ts-modal-overlay'; // 'show' added after a tick for animation
+        overlay.innerHTML = `
+            <div class="ts-modal">
+                <div class="ts-modal-header">
+                    <span class="ts-modal-title">${title}</span>
+                    <button class="ts-modal-close"><i class="bi bi-x-lg"></i></button>
+                </div>
+                <div class="ts-modal-body">
+                    <div style="padding:24px">
+                        ${bodyHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        // Trigger animation
+        requestAnimationFrame(() => {
+            overlay.classList.add('show');
+        });
+
+        const close = () => {
+            overlay.classList.remove('show');
+            setTimeout(() => overlay.remove(), 200); // Wait for transition
+        };
+
+        overlay.querySelector('.ts-modal-close')?.addEventListener('click', close);
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) close();
+        });
+
+        return overlay;
     }
 }

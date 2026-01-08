@@ -69,7 +69,7 @@ export class ApiClient {
         const urls: Record<string, string> = {
             appdev: 'https://appdev.kbase.us/services/berdl_table_scanner',
             prod: 'https://kbase.us/services/berdl_table_scanner',
-            local: 'http://localhost:8000'
+            local: 'http://127.0.0.1:8000'
         };
         return urls[env] || urls.appdev;
     }
@@ -183,6 +183,25 @@ export class ApiClient {
     // Public Methods
 
     public async listTables(berdlTableId: string): Promise<any> {
+        // Mock Mode for local test data
+        if (berdlTableId === 'test/test/test') {
+            try {
+                const res = await fetch('/config/test-data.json');
+                const config = await res.json();
+                const tables = Object.entries(config.tables || {}).map(([name, conf]: [string, any]) => ({
+                    name,
+                    displayName: conf.displayName || name,
+                    row_count: 500, // Mock count
+                    column_count: conf.columns?.length || 0,
+                    description: conf.description
+                }));
+                return { tables, type: 'test_data' };
+            } catch (e) {
+                console.warn('Failed to load local test data config', e);
+                // Fallback to network request if local fetch fails
+            }
+        }
+
         return this.request(`/object/${berdlTableId}/tables`, 'GET', undefined, true);
     }
 
@@ -193,10 +212,50 @@ export class ApiClient {
             offset: req.offset || 0,
             kb_env: this.environment
         };
+
+        if (req.berdl_table_id === 'test/test/test') {
+            return this.generateMockData(req);
+        }
+
         // Use cache for data requests? Original used _post with useCache=false for getTableDataREST but implicit check.
         // But getTableData used _post without useCache arg (defaults false).
         // Let's keep it false for data to ensure freshness, or customizable.
         return this.request('/table-data', 'POST', body, false);
+    }
+
+    private async generateMockData(req: TableDataRequest): Promise<TableDataResponse> {
+        try {
+            const res = await fetch('/config/test-data.json');
+            const config = await res.json();
+            const tableConfig = config.tables?.[req.table_name];
+
+            if (!tableConfig) throw new Error(`Table ${req.table_name} not found in mock config`);
+
+            const headers = tableConfig.columns.map((c: any) => c.column);
+            const count = Math.min(req.limit || 100, 500 - (req.offset || 0));
+
+            const data = Array.from({ length: count > 0 ? count : 0 }, (_, i) => {
+                const idx = (req.offset || 0) + i + 1;
+                return headers.map((h: string) => {
+                    if (h.includes('id') && h !== 'genome_id' && h !== 'contig_id') return `ID_${idx}`;
+                    if (h === 'genome_id') return `Genome_${(idx % 5) + 1}`;
+                    if (h.includes('function')) return `Mock Function ${idx}`;
+                    if (h === 'length') return Math.floor(Math.random() * 5000) + 100;
+                    if (h === 'score' || h.includes('af')) return (Math.random() * 100).toFixed(2);
+                    if (h.includes('ani')) return (95 + Math.random() * 5).toFixed(2);
+                    return `Val ${idx}-${h}`;
+                });
+            });
+
+            return {
+                headers,
+                data,
+                total_count: 500
+            };
+        } catch (e) {
+            console.error('Mock data generation failed', e);
+            return { headers: [], data: [], total_count: 0 };
+        }
     }
 }
 
