@@ -2,6 +2,8 @@
 archive
 data/
 docs/personal/
+public/config/test-data.json
+public/config/pangenome.json
 
 # Logs
 logs
