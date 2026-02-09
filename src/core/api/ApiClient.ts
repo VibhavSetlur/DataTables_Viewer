@@ -375,7 +375,7 @@ export class ApiClient {
      * @param berdlTableId - Workspace object reference (UPA format)
      */
     public async listDatabases(berdlTableId: string): Promise<TableListResponse> {
-        return this.request(`/object/${encodeURIComponent(berdlTableId)}/databases`, 'GET', undefined, true);
+        return this.request(`/databases?upa=${encodeURIComponent(berdlTableId)}`, 'GET', undefined, true);
     }
 
     /**
@@ -384,7 +384,7 @@ export class ApiClient {
      * @param dbName - Database name within the object
      */
     public async listTablesInDatabase(berdlTableId: string, dbName: string): Promise<TableListResponse> {
-        return this.request(`/object/${encodeURIComponent(berdlTableId)}/db/${encodeURIComponent(dbName)}/tables`, 'GET', undefined, true);
+        return this.request(`/db/${encodeURIComponent(dbName)}/tables?upa=${encodeURIComponent(berdlTableId)}`, 'GET', undefined, true);
     }
 
     /**
@@ -399,6 +399,7 @@ export class ApiClient {
         req: TableDataRequest
     ): Promise<TableDataResponse> {
         const params = new URLSearchParams({
+            upa: berdlTableId,
             limit: String(req.limit || DEFAULT_LIMIT),
             offset: String(req.offset || DEFAULT_OFFSET),
             kb_env: this.environment
@@ -408,7 +409,7 @@ export class ApiClient {
         if (req.sort_order) params.set('sort_order', req.sort_order);
         if (req.search_value) params.set('search', req.search_value);
 
-        const path = `/object/${encodeURIComponent(berdlTableId)}/db/${encodeURIComponent(dbName)}/tables/${encodeURIComponent(req.table_name)}/data?${params.toString()}`;
+        const path = `/db/${encodeURIComponent(dbName)}/tables/${encodeURIComponent(req.table_name)}/data?${params.toString()}`;
         return this.request(path, 'GET', undefined, true);
     }
 
