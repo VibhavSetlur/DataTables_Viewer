@@ -135,7 +135,7 @@ export class ApiClient {
     }
 
 
-    private getHeaders(): HeadersInit {
+    public getHeaders(): HeadersInit {
         const headers: HeadersInit = {
             'Content-Type': 'application/json',
             'Accept': 'application/json',

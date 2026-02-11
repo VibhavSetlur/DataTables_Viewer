@@ -247,15 +247,19 @@ export class Sidebar extends Component {
         });
 
         // Column Controls
-        this.dom.controlShowAll?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.toggleAllColumns();
-        });
+        if (this.dom.controlShowAll) {
+            this.dom.controlShowAll.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleAllColumns();
+            });
+        }
 
-        this.dom.controlExpandAll?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.toggleAllCategories();
-        });
+        if (this.dom.controlExpandAll) {
+            this.dom.controlExpandAll.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.toggleAllCategories();
+            });
+        }
 
         // Filters
         this.dom.clearFilters?.addEventListener('click', () => {
@@ -323,27 +327,6 @@ export class Sidebar extends Component {
                     this.stateManager.update({ visibleColumns: state.visibleColumns });
                 }
             }
-        });
-
-        // Global Control Actions
-        this.dom.controlExpandAll?.addEventListener('click', () => {
-            const groups = this.dom.controlList.querySelectorAll('.ts-cat-group');
-            const anyCollapsed = Array.from(groups).some((g: Element) => !g.classList.contains('expanded'));
-            groups.forEach((g: Element) => {
-                const catId = (g as HTMLElement).dataset.cat;
-                if (anyCollapsed) {
-                    g.classList.add('expanded');
-                    if (catId) this.expandedCategories.add(catId);
-                } else {
-                    g.classList.remove('expanded');
-                    if (catId) this.expandedCategories.delete(catId);
-                }
-            });
-            this.dom.controlExpandAll.textContent = anyCollapsed ? 'Collapse All' : 'Expand All';
-        });
-
-        this.dom.controlShowAll?.addEventListener('click', () => {
-            this.toggleAllColumns();
         });
 
         // Schema view click
@@ -463,51 +446,46 @@ export class Sidebar extends Component {
         const state = this.stateManager.getState();
         if (state.columns.length === 0) return;
 
-        // Create a NEW Set to ensure state change detection
+        // Determine if *all* current columns are visible (ignore any stale entries in the Set)
+        const allVisible = state.columns.every(c => state.visibleColumns.has(c.column));
+
         const newVisible = new Set<string>();
 
-        // Determine current state: all visible, or not
-        const allVisible = state.visibleColumns.size === state.columns.length;
-
-        if (allVisible) {
-            // Hide all: newVisible stays empty
-        } else {
+        if (!allVisible) {
             // Show all: add all column names to the new set
             state.columns.forEach(c => newVisible.add(c.column));
         }
+        // else: Hide all → newVisible stays empty
 
-        // Push update with new Set reference
         this.stateManager.update({ visibleColumns: newVisible });
-
-        // Update button text
-        if (this.dom.controlShowAll) {
-            this.dom.controlShowAll.textContent = allVisible ? 'Show All' : 'Hide All';
-        }
     }
 
     private toggleAllCategories() {
-        // Expand/Collapse all categories
-        const categoryHeaders = this.dom.controlList?.querySelectorAll('.ts-category-header');
-        if (!categoryHeaders) return;
+        // Expand/Collapse all category groups based on current expanded state
+        if (!this.dom.controlList) return;
 
-        // Check if any is collapsed, if so, expand all
-        let anyCollapsed = false;
-        categoryHeaders.forEach(el => {
-            if (el.classList.contains('collapsed')) anyCollapsed = true;
-        });
+        const groups = this.dom.controlList.querySelectorAll('.ts-cat-group');
+        if (groups.length === 0) return;
 
-        categoryHeaders.forEach(el => {
-            const content = el.nextElementSibling as HTMLElement;
+        const anyCollapsed = Array.from(groups).some((g: Element) => !g.classList.contains('expanded'));
+
+        groups.forEach((g: Element) => {
+            const groupEl = g as HTMLElement;
+            const catId = groupEl.dataset.cat;
+
             if (anyCollapsed) {
-                el.classList.remove('collapsed');
-                el.querySelector('i')?.classList.replace('bi-chevron-right', 'bi-chevron-down');
-                if (content) content.style.display = 'block';
+                groupEl.classList.add('expanded');
+                if (catId) this.expandedCategories.add(catId);
             } else {
-                el.classList.add('collapsed');
-                el.querySelector('i')?.classList.replace('bi-chevron-down', 'bi-chevron-right');
-                if (content) content.style.display = 'none';
+                groupEl.classList.remove('expanded');
+                if (catId) this.expandedCategories.delete(catId);
             }
         });
+
+        // Update button label according to the *next* action
+        if (this.dom.controlExpandAll) {
+            this.dom.controlExpandAll.textContent = anyCollapsed ? 'Collapse All' : 'Expand All';
+        }
     }
 
     private showAggregationsPanel() {
@@ -755,9 +733,19 @@ export class Sidebar extends Component {
 
         this.dom.controlList.innerHTML = html;
 
-        // Update Show All text
-        const allVisible = state.columns.every(c => state.visibleColumns.has(c.column));
-        if (this.dom.controlShowAll) this.dom.controlShowAll.textContent = allVisible ? 'Hide All' : 'Show All';
+        // Update Show All text based on current visibility
+        const allVisible = state.columns.length > 0 &&
+            state.columns.every(c => state.visibleColumns.has(c.column));
+        if (this.dom.controlShowAll) {
+            this.dom.controlShowAll.textContent = allVisible ? 'Hide All' : 'Show All';
+        }
+
+        // Update Expand All / Collapse All text based on current expansion state
+        if (this.dom.controlExpandAll) {
+            const groups = this.dom.controlList.querySelectorAll('.ts-cat-group');
+            const anyCollapsed = Array.from(groups).some((g: Element) => !g.classList.contains('expanded'));
+            this.dom.controlExpandAll.textContent = anyCollapsed ? 'Expand All' : 'Collapse All';
+        }
     }
 
     private renderCategoryGroup(cat: any, colNames: string[], state: AppState, isUncategorized = false) {

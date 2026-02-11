@@ -297,22 +297,6 @@ export class DataGrid extends Component {
                 return;
             }
 
-            // Row selection by clicking anywhere on the row (except checkboxes, buttons, inputs, links)
-            if (target.tagName !== 'BUTTON' && target.tagName !== 'INPUT' && !target.closest('a') && !target.closest('.ts-copy-btn')) {
-                const tr = target.closest('tr');
-                if (tr && tr.parentElement?.tagName === 'TBODY') {
-                    const idx = parseInt(tr.dataset.idx || '-1');
-                    if (idx >= 0) {
-                        const isSelected = this.selection.has(idx);
-                        if (isSelected) this.selection.delete(idx);
-                        else this.selection.add(idx);
-
-                        this.render();
-                        this.options.onRowSelect(idx, !isSelected);
-                    }
-                }
-            }
-
             // Copy ID
             const copyBtn = target.closest('.ts-copy-btn');
             if (copyBtn) {
@@ -320,6 +304,28 @@ export class DataGrid extends Component {
                 if (text) {
                     navigator.clipboard.writeText(text);
                 }
+            }
+        };
+
+        // Double-click to copy full cell contents
+        this.container.ondblclick = (e) => {
+            const target = e.target as HTMLElement;
+
+            // Ignore double-clicks on interactive controls
+            if (target.closest('button') || target.closest('input') || target.closest('a')) {
+                return;
+            }
+
+            const cell = target.closest('td[data-row][data-col]') as HTMLElement | null;
+            if (!cell) return;
+
+            const text = cell.innerText.trim();
+            if (!text) return;
+
+            if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                navigator.clipboard.writeText(text).catch(() => {
+                    // Silently ignore clipboard failures (permissions, etc.)
+                });
             }
         };
 
