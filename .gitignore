@@ -22,6 +22,8 @@ dist.tar.gz
 dist/
 public/app-config.json
 .agent/
+.gsd/
+.gemini/
 
 # Dependencies
 node_modules/
