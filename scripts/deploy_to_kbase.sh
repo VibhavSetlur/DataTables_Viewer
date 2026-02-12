@@ -14,7 +14,9 @@ echo "============================================"
 cd "$PROJECT_ROOT"
 
 echo ""
-echo "[1/3] Building production bundle..."
+echo "[1/3] Building production bundle (no local overrides)..."
+# Ensure deployment build uses config/index.json URLs only (no VITE_API_URL)
+unset VITE_API_URL
 npm run build
 
 echo ""

@@ -75,9 +75,14 @@ export class TableRenderer {
             // 2. Initialize ConfigManager with app config
             this.configManager = new ConfigManager(appConfig);
 
-            // 3. Initialize API Client
+            // 3. Initialize API Client (use config URLs; override TableScanner URL only when VITE_API_URL is set for local dev)
+            const serviceUrls = { ...this.configManager.getServiceUrls() };
+            const envApiUrl = import.meta.env?.VITE_API_URL as string | undefined;
+            if (envApiUrl && envApiUrl.trim() !== '') {
+                serviceUrls['tablescanner'] = envApiUrl.trim();
+            }
             this.client = new ApiClient({
-                serviceUrls: this.configManager.getServiceUrls()
+                serviceUrls
             });
 
             const settings = this.configManager.getGlobalSettings();

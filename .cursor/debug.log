@@ -1,0 +1,2 @@
+{"location":"ApiClient.ts:listDatabases","message":"listDatabases request","data":{"upa":"76990/7/2","baseUrl":"https://appdev.kbase.us/services/berdl_table_scanner"},"timestamp":1770933597290,"hypothesisId":"B"}
+{"location":"ApiClient.ts:listDatabases","message":"listDatabases error","data":{"upa":"76990/7/2","error":"Workspace service error: Token validation failed: Auth service returned an error: 10020 Invalid token","status":500},"timestamp":1770933597743,"hypothesisId":"B"}

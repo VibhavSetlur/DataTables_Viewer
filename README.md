@@ -51,6 +51,10 @@ npm run dev
 - **Via UI**: Use the sidebar to enter a KBase Object ID or Database Name.
 - **Via URL**: Pass the `db` parameter directly: `?db=76990/7/2`.
 
+### Deployment and local testing
+- To test that behavior matches deployment, run `npm run dev` **without** setting `VITE_API_URL`; the app will use the same API URLs as in production (`public/config/index.json`). See [Testing guide — Local testing that matches deployment](docs/TESTING.md#local-testing-that-matches-deployment).
+- To build for KBase deployment, use `./scripts/deploy_to_kbase.sh` (it builds with no local overrides and copies to the target directory).
+
 ---
 
 ## Project Structure
@@ -74,6 +78,9 @@ src/
 | Command | Action |
 |:---|:---|
 | `npm run build` | Compile for production (outputs to `dist/`) |
+| `npm run build:deploy` | Same as `build` (use for deployment; ensure `VITE_API_URL` is unset) |
+| `npm run preview` | Serve the built app locally |
+| `npm run preview:deploy` | Build then serve (for testing production build locally) |
 | `npm test` | Execute full unit test suite (Vitest) |
 | `npm run lint` | Run ESLint strict checks |
 | `npm run typecheck` | Perform static type analysis (TSC) |

@@ -2,6 +2,33 @@
 
 This guide covers how to test the DataTables Viewer with your databases and configurations.
 
+## Local testing that matches deployment
+
+To ensure what works locally will work when deployed on KBase:
+
+1. **Test against the same services as production**  
+   Run the viewer **without** setting `VITE_API_URL` (and do not use a `.env` that sets it). The app will load `public/config/index.json` and use the same TableScanner and Workspace URLs as in deployment (e.g. `https://appdev.kbase.us/services/berdl_table_scanner`).  
+   ```bash
+   npm run dev
+   ```  
+   Open the app, enter a KBase object ref (e.g. `76990/7/2`), and ensure your token is available (e.g. set in the sidebar, or use an `app-config.json` with `token` and `upa` for Narrative-like testing).
+
+2. **Build for deployment**  
+   The deploy script (`scripts/deploy_to_kbase.sh`) runs a production build with `VITE_API_URL` unset so the built bundle uses only `config/index.json` (same as production).  
+   To build the same bundle locally:  
+   ```bash
+   unset VITE_API_URL
+   npm run build
+   ```  
+   Then serve `dist/` (e.g. `npx serve dist` or `npm run preview`) to verify the production build.
+
+3. **Optional: local TableScanner development**  
+   When developing or debugging the TableScanner backend, point the viewer at your local instance:  
+   ```bash
+   VITE_API_URL=http://127.0.0.1:8000 npm run dev
+   ```  
+   Use a `.env` with `VITE_API_URL=http://127.0.0.1:8000` if you prefer. Do **not** set `VITE_API_URL` when building or testing for deployment.
+
 ## Quick Start Testing
 
 ### 1. Test with Existing Database

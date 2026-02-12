@@ -16,7 +16,9 @@
     "scripts": {
         "dev": "vite",
         "build": "tsc && vite build",
+        "build:deploy": "tsc && vite build",
         "preview": "vite preview",
+        "preview:deploy": "npm run build:deploy && vite preview",
         "typecheck": "tsc --noEmit",
         "typecheck:watch": "tsc --noEmit --watch",
         "test": "vitest",
