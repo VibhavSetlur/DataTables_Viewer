@@ -1,8 +1,8 @@
 /**
  * Structured Logger with History
  *
- * Production-grade logging utility with configurable log levels
- * and in-memory history for debugging.
+ * Production-grade logging utility with configurable log levels,
+ * in-memory history for debugging, and global error capture.
  *
  * @module logger
  */
@@ -17,18 +17,19 @@ export interface LogEntry {
     data?: unknown;
 }
 
-const MAX_LOG_HISTORY = 500;
+const MAX_LOG_HISTORY = 1000;
 const logHistory: LogEntry[] = [];
 
 /**
- * Get configured log level from environment or default to 'warn' for production.
+ * Get configured log level from environment or default to 'debug' in dev, 'info' in prod.
  */
 function getLogLevel(): LogLevel {
     const envLevel = (import.meta.env?.VITE_LOG_LEVEL as string)?.toLowerCase();
     if (envLevel && envLevel in LOG_LEVELS) {
         return envLevel as LogLevel;
     }
-    return import.meta.env?.DEV ? 'debug' : 'warn';
+    // Always capture info+ in production so logs are useful
+    return import.meta.env?.DEV ? 'debug' : 'info';
 }
 
 const currentLevel = getLogLevel();
@@ -59,7 +60,6 @@ function addToHistory(level: LogLevel, msg: string, data?: unknown): void {
         data: data !== undefined ? data : undefined
     };
     logHistory.push(entry);
-    // Trim if over limit
     if (logHistory.length > MAX_LOG_HISTORY) {
         logHistory.shift();
     }
@@ -77,9 +77,6 @@ function addToHistory(level: LogLevel, msg: string, data?: unknown): void {
  * Set VITE_LOG_LEVEL environment variable to control output.
  */
 export const logger = {
-    /**
-     * Debug-level logging for development.
-     */
     debug(msg: string, data?: unknown): void {
         addToHistory('debug', msg, data);
         if (shouldLog('debug')) {
@@ -91,9 +88,6 @@ export const logger = {
         }
     },
 
-    /**
-     * Info-level logging for operational messages.
-     */
     info(msg: string, data?: unknown): void {
         addToHistory('info', msg, data);
         if (shouldLog('info')) {
@@ -105,9 +99,6 @@ export const logger = {
         }
     },
 
-    /**
-     * Warn-level logging for potential issues.
-     */
     warn(msg: string, data?: unknown): void {
         addToHistory('warn', msg, data);
         if (shouldLog('warn')) {
@@ -119,9 +110,6 @@ export const logger = {
         }
     },
 
-    /**
-     * Error-level logging for failures.
-     */
     error(msg: string, data?: unknown): void {
         addToHistory('error', msg, data);
         if (shouldLog('error')) {
@@ -147,5 +135,62 @@ export const logger = {
         logHistory.length = 0;
     }
 };
+
+// =============================================================================
+// GLOBAL ERROR CAPTURE
+// =============================================================================
+// Captures uncaught errors and unhandled promise rejections so they always
+// appear in the LogViewer, even if no explicit logger.error() call exists.
+
+let _globalHandlersInstalled = false;
+
+export function installGlobalErrorHandlers(): void {
+    if (_globalHandlersInstalled || typeof window === 'undefined') return;
+    _globalHandlersInstalled = true;
+
+    window.addEventListener('error', (event: ErrorEvent) => {
+        const msg = event.message || 'Unknown error';
+        const location = event.filename
+            ? ` (${event.filename}:${event.lineno}:${event.colno})`
+            : '';
+        addToHistory('error', `[Uncaught] ${msg}${location}`, {
+            source: 'frontend',
+            stack: event.error?.stack
+        });
+    });
+
+    window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
+        const reason = event.reason;
+        const msg = reason instanceof Error
+            ? reason.message
+            : (typeof reason === 'string' ? reason : JSON.stringify(reason));
+        addToHistory('error', `[UnhandledPromise] ${msg}`, {
+            source: 'frontend',
+            stack: reason instanceof Error ? reason.stack : undefined
+        });
+    });
+
+    // Intercept console.error and console.warn so that third-party code
+    // (or browser-generated warnings) also lands in the log history.
+    const origError = console.error;
+    const origWarn = console.warn;
+
+    console.error = (...args: any[]) => {
+        const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+        // Avoid duplicates from our own logger (which already calls addToHistory)
+        if (!msg.includes('[ERROR]')) {
+            addToHistory('error', `[console.error] ${msg}`);
+        }
+        origError.apply(console, args);
+    };
+
+    console.warn = (...args: any[]) => {
+        const msg = args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ');
+        if (!msg.includes('[WARN]')) {
+            addToHistory('warn', `[console.warn] ${msg}`);
+        }
+        origWarn.apply(console, args);
+    };
+}
 
 export default logger;

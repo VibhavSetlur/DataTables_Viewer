@@ -229,7 +229,20 @@ export class ApiClient {
             }
         }
 
-        const response = await fetch(fetchUrl, options);
+        // Log outgoing request (skip system/logs to avoid recursion)
+        const isLogEndpoint = endpoint.includes('/system/logs');
+        if (!isLogEndpoint) {
+            logger.debug(`[API] ${method} ${endpoint}`);
+        }
+
+        let response: Response;
+        try {
+            response = await fetch(fetchUrl, options);
+        } catch (networkError: any) {
+            const msg = `[API] Network error: ${method} ${endpoint} — ${networkError.message}`;
+            logger.error(msg, { endpoint, method });
+            throw networkError;
+        }
 
         if (!response.ok) {
             let errorMsg = `HTTP ${response.status}`;
@@ -237,22 +250,27 @@ export class ApiClient {
             try {
                 const data = await response.json();
                 errorDetails = data;
-                // Try multiple common error message fields - prioritize detail field
                 if (data.detail && typeof data.detail === 'string' && data.detail.length > 0) {
                     errorMsg = data.detail;
                 } else {
                     errorMsg = data.message || data.error || data.msg || errorMsg;
                 }
-                // For 500 errors with Shock API issues, include full context
                 if (response.status === 500 && data.detail && data.detail.includes('shock-api')) {
-                    errorMsg = data.detail; // Use the full detail message
+                    errorMsg = data.detail;
                 }
             } catch {
                 const text = await response.text().catch(() => '');
                 errorMsg = text || `${errorMsg}: ${response.statusText}`;
             }
 
-            // Create error with additional context
+            // Log the error with full context
+            if (!isLogEndpoint) {
+                logger.error(`[API] ${method} ${endpoint} → ${response.status}: ${errorMsg}`, {
+                    status: response.status,
+                    details: errorDetails
+                });
+            }
+
             const error = new Error(errorMsg);
             (error as any).status = response.status;
             (error as any).details = errorDetails;
@@ -451,6 +469,7 @@ export class ApiClient {
 
     /**
      * Make a JSON-RPC call to the KBase Workspace service.
+     * IMPORTANT: /services/ws only accepts POST. GET returns 500 "HTTP GET not allowed."
      * @param method The Workspace method to call (e.g., 'get_objects2')
      * @param params The parameters array for the method
      * @returns The result from the Workspace service
@@ -501,5 +520,14 @@ export class ApiClient {
             objects: [{ ref }],
             includeMetadata: 1
         }]);
+    }
+    /**
+     * Get system logs from the backend.
+     */
+    public async getSystemLogs(limit: number = 100, level?: string): Promise<any[]> {
+        const query = new URLSearchParams({ limit: String(limit) });
+        if (level) query.append('level', level);
+
+        return this.request(`/system/logs?${query.toString()}`, 'GET', undefined, false);
     }
 }

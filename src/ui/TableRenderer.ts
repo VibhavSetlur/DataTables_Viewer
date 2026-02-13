@@ -449,7 +449,7 @@ export class TableRenderer {
         // View Logs Button
         const viewLogsBtn = this.container.querySelector('#ts-view-logs');
         viewLogsBtn?.addEventListener('click', () => {
-            this.logViewer.show();
+            this.logViewer.show(this.client);
         });
 
         // DataGrid

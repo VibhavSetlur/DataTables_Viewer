@@ -2,7 +2,10 @@
  * DataTables Viewer - Entry Point
  */
 import { TableRenderer } from './ui/TableRenderer';
-import { logger } from './utils/logger';
+import { logger, installGlobalErrorHandlers } from './utils/logger';
+
+// Capture all uncaught errors, unhandled rejections, and console.error/warn
+installGlobalErrorHandlers();
 
 document.addEventListener('DOMContentLoaded', async () => {
     const appContainer = document.querySelector<HTMLDivElement>('#app');
