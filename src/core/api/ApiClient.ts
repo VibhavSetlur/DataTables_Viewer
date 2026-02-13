@@ -142,7 +142,8 @@ export class ApiClient {
             ...this.customHeaders
         };
         if (this.token) {
-            // TableScanner API expects "Bearer <token>" format
+            // TableScanner API expects "Bearer <token>" format.
+            // NOTE: The KBase Workspace API does NOT — see getWorkspaceHeaders().
             const authValue = this.token.startsWith('Bearer ')
                 ? this.token
                 : `Bearer ${this.token}`;
@@ -433,6 +434,22 @@ export class ApiClient {
     }
 
     /**
+     * Headers for direct KBase Workspace API calls.
+     * The Workspace JSON-RPC API expects a raw token — NOT a Bearer-prefixed token.
+     */
+    private getWorkspaceHeaders(): HeadersInit {
+        const token = this.token || this.getKBaseSessionCookie() || '';
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+        };
+        if (token) {
+            // Strip any Bearer/OAuth prefix — the Workspace API expects the raw token
+            headers['Authorization'] = token.replace(/^(Bearer|OAuth)\s+/i, '');
+        }
+        return headers;
+    }
+
+    /**
      * Make a JSON-RPC call to the KBase Workspace service.
      * @param method The Workspace method to call (e.g., 'get_objects2')
      * @param params The parameters array for the method
@@ -442,7 +459,7 @@ export class ApiClient {
         const wsUrl = this.getWorkspaceUrl();
         const response = await fetch(wsUrl, {
             method: 'POST',
-            headers: this.getHeaders(),
+            headers: this.getWorkspaceHeaders(),
             body: JSON.stringify({
                 version: '1.1',
                 method: `Workspace.${method}`,
