@@ -358,8 +358,7 @@ export class ApiClient {
         const body = {
             ...req,
             limit: req.limit || DEFAULT_LIMIT,
-            offset: req.offset || DEFAULT_OFFSET,
-            kb_env: this.environment
+            offset: req.offset || DEFAULT_OFFSET
         };
 
         return this.request('/table-data', 'POST', body, false);
@@ -420,8 +419,7 @@ export class ApiClient {
         const params = new URLSearchParams({
             upa: berdlTableId,
             limit: String(req.limit || DEFAULT_LIMIT),
-            offset: String(req.offset || DEFAULT_OFFSET),
-            kb_env: this.environment
+            offset: String(req.offset || DEFAULT_OFFSET)
         });
 
         if (req.sort_column) params.set('sort_column', req.sort_column);
