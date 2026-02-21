@@ -127,7 +127,46 @@ export class ConfigManager {
         if (config.apis) {
             Object.values(config.apis).forEach(api => {
                 if (api.url) {
-                    this.serviceUrls[api.id] = api.url;
+                    try {
+                        let finalUrl = api.url;
+                        const urlObj = new URL(api.url);
+
+                        // If the configured URL is a KBase URL
+                        if (urlObj.hostname.includes('kbase.us')) {
+                            // Are we running inside a KBase domain? (e.g. narrative.kbase.us or appdev.kbase.us)
+                            const isRunOnKBase = typeof window !== 'undefined' && window.location.origin.includes('kbase.us');
+                            const isAppDev = isRunOnKBase ? window.location.origin.includes('appdev') : urlObj.hostname.includes('appdev');
+
+                            // If we aren't explicitly on a KBase domain (e.g., localhost), default to the URL specified in index.json
+                            // Otherwise, intelligently map the API based on the surrounding environment
+                            if (isRunOnKBase) {
+                                if (api.id === 'tablescanner') {
+                                    // Specific routing for the tablescanner service API
+                                    let endpointPath = urlObj.pathname
+                                        .replace('/services/berdl_table_scanner', '')
+                                        .replace('/apis/dev_tablescanner', '');
+
+                                    finalUrl = isAppDev
+                                        ? `https://appdev.kbase.us/services/berdl_table_scanner${endpointPath}${urlObj.search}${urlObj.hash}`
+                                        : `https://berdl.kbase.us/apis/dev_tablescanner${endpointPath}${urlObj.search}${urlObj.hash}`;
+                                } else if (api.id === 'workspace') {
+                                    // Specific routing for KBase Workspace
+                                    finalUrl = isAppDev
+                                        ? `https://appdev.kbase.us/services/ws`
+                                        : `https://kbase.us/services/ws`;
+                                } else {
+                                    // Fallback routing for any other potential KBase services
+                                    const kbaseServiceOrigin = isAppDev ? 'https://appdev.kbase.us' : 'https://kbase.us';
+                                    finalUrl = `${kbaseServiceOrigin}${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
+                                }
+                            }
+                        }
+
+                        this.serviceUrls[api.id] = finalUrl;
+                    } catch (e) {
+                        // Fallback if URL parsing fails
+                        this.serviceUrls[api.id] = api.url;
+                    }
                 }
             });
         }
